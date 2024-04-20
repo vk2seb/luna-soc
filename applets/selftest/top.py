@@ -256,10 +256,10 @@ class SelftestCore(Elaboratable):
 
         phy_dq_i = Signal(32)
         phy_dq_o = Signal(32)
-        phy_dq_oe = Signal(32)
+        phy_dq_oe = Signal(1)
         phy_rwds_i = Signal(4)
         phy_rwds_o = Signal(4)
-        phy_rwds_oe = Signal(4)
+        phy_rwds_oe = Signal(1)
 
         m.d.comb += [
             phy_dq_i.eq(self.hram.phy.dq.i),
