@@ -184,7 +184,7 @@ class HyperRAMX2(Peripheral, Elaboratable):
      - Handle variable latency writes
      - Add Litex automated tests
     """
-    def __init__(self, *, name, latency = 6, cr0_preset = None,
+    def __init__(self, *, name, latency = 5, cr0_preset = None,
                  cr1_preset = None, dual_die_control = True):
 
         super().__init__(name=name)
