@@ -5,7 +5,7 @@
 # - configuration -------------------------------------------------------------
 
 UART	?= /dev/ttyACM0
-CROSS	?= riscv64-unknown-elf
+CROSS	?= riscv-none-elf
 
 AR		= $(CROSS)-ar
 CC		= $(CROSS)-gcc
@@ -17,7 +17,7 @@ SOC		= top.py
 # - firmware ------------------------------------------------------------------
 
 CFLAGS	= -I./build/genc/ \
-		  -march=rv32im \
+		  -march=rv32im_zicsr \
 		  -mabi=ilp32 \
 		  -g \
 		  -Os
@@ -32,8 +32,7 @@ SOURCES = \
 	$(TARGET).c \
 	platform.c \
 	uart.c \
-	ulpi.c \
-	psram.c
+	ulpi.c
 
 $(TARGET).o: build/genc/soc.ld build/genc/resources.h $(SOURCES) $(TARGET).ld
 	$(CC) $(CFLAGS) $(LDFLAGS) $(SOURCES) -o $@

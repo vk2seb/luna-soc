@@ -5,6 +5,7 @@ memory.x
 applets/**/build/
 examples/**/build/
 *.bit
+*.venv
 
 # Compiled python files
 __pycache__/
