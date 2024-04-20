@@ -17,7 +17,7 @@ from lambdasoc.periph.timer        import TimerPeripheral
 
 from luna                          import configure_default_logging
 #from luna.gateware.interface.psram import HyperRAMInterface, HyperRAMPHY
-from hyper import HyperBusPHY, HyperRAMX2
+from hyper import HyperRAMX2, HyperRAMX2Tuner
 from luna.gateware.interface.ulpi  import ULPIRegisterWindow
 from luna.gateware.usb.usb2.device import USBDevice
 
@@ -37,6 +37,7 @@ import sys
 CLOCK_FREQUENCIES_MHZ = {
     "sync":  60,
     "usb":   60,
+    "fast": 120,
 }
 
 
@@ -118,77 +119,52 @@ class ULPIRegisterPeripheral(Peripheral, Elaboratable):
 
         return m
 
+class CRGTuner(Peripheral, Elaboratable):
 
-# - PSRAMRegisterPeripheral ---------------------------------------------------
+    def __init__(self):
+        super().__init__()
 
-class PSRAMRegisterPeripheral(Peripheral, Elaboratable):
-    """ Peripheral that provides access to a ULPI PHY, and its registers. """
+        # peripheral control registers
+        regs                = self.csr_bank()
+        self._slip_hr2x     = regs.csr(1, "w")
+        self._slip_hr2x90   = regs.csr(1, "w")
+        self._phase_sel     = regs.csr(2, "w")
+        self._phase_dir     = regs.csr(1, "w")
+        self._phase_step    = regs.csr(1, "w")
+        self._phase_load    = regs.csr(1, "w")
 
-    def __init__(self, name="ram"):
-        super().__init__(name=name)
+        # peripheral bus
+        self._bridge = self.bridge(data_width=32, granularity=8, alignment=2)
+        self.bus     = self._bridge.bus
 
-        # Create our registers...
-        bank            = self.csr_bank()
-        self._address   = bank.csr(32, "w")
-        self._rvalue     = bank.csr(32, "r")
-        self._wvalue     = bank.csr(32, "w")
-        self._write     = bank.csr(1,  "w")
-        self._busy      = bank.csr(1,  "r")
-
-        # ... and convert our register into a Wishbone peripheral.
-        self._bridge    = self.bridge(data_width=32, granularity=8, alignment=2)
-        self.bus        = self._bridge.bus
-
+    def set_crg(self, crg_instance):
+        self.crg = crg_instance
 
     def elaborate(self, platform):
         m = Module()
+
+        with m.If(self._slip_hr2x.w_stb):
+            m.d.sync += self.crg.slip_hr2x.eq(self._slip_hr2x.w_data)
+
+        with m.If(self._slip_hr2x90.w_stb):
+            m.d.sync += self.crg.slip_hr2x90.eq(self._slip_hr2x90.w_data)
+
+        with m.If(self._phase_sel.w_stb):
+            m.d.sync += self.crg.phase_sel.eq(self._phase_sel.w_data)
+
+        with m.If(self._phase_dir.w_stb):
+            m.d.sync += self.crg.phase_dir.eq(self._phase_dir.w_data)
+
+        with m.If(self._phase_step.w_stb):
+            m.d.sync += self.crg.phase_step.eq(self._phase_step.w_data)
+
+        with m.If(self._phase_load.w_stb):
+            m.d.sync += self.crg.phase_load.eq(self._phase_load.w_data)
+
         m.submodules.bridge = self._bridge
 
-        #
-        # HyperRAM interface window.
-        #
-        ram_bus = platform.request('ram')
-        psram_phy = HyperRAMPHY(bus=ram_bus)
-        psram = HyperRAMInterface(phy=psram_phy.phy)
-        m.submodules += [psram_phy, psram]
-
-        # Hook up our PSRAM.
-        m.d.comb += [
-            ram_bus.reset.o        .eq(0),
-            psram.single_page      .eq(0),
-            psram.perform_write    .eq(self._write.w_data),
-            psram.register_space   .eq(0),
-            psram.final_word       .eq(1),
-            psram.write_data       .eq(self._wvalue.w_data),
-        ]
-
-        #
-        # Address register logic.
-        #
-
-        # Execute request whenever the user writes the address register...
-        m.d.sync += psram.start_transfer.eq(self._address.w_stb)
-
-        # And update the register address accordingly.
-        with m.If(self._address.w_stb):
-            m.d.sync += psram.address.eq(self._address.w_data)
-
-
-        #
-        # Value register logic.
-        #
-
-        # Always report back the last read data.
-        with m.If(psram.read_ready):
-            m.d.sync += self._rvalue.r_data.eq(psram.read_data)
-
-
-        #
-        # Busy register logic.
-        #
-        m.d.comb += self._busy.r_data.eq(~psram.idle)
-
         return m
+
 
 
 # - SelftestCore --------------------------------------------------------------
@@ -234,11 +210,17 @@ class SelftestCore(Elaboratable):
         self.soc.add_peripheral(self.soc.uart, as_submodule=False)
 
         # ... and add our peripherals under test.
-        peripherals = (
+        peripherals = [
             LedPeripheral(name="leds"),
             ULPIRegisterPeripheral(name="target_ulpi",   io_resource_name="target_phy"),
-            HyperRAMX2(name="hyperramx2")
-        )
+        ]
+
+        hram = HyperRAMX2(name="hyperramx2")
+        hyperram_tune = HyperRAMX2Tuner(hyperram_instance=hram)
+
+        self.crg_tune = CRGTuner()
+
+        peripherals += [hram, hyperram_tune, self.crg_tune]
 
         for peripheral in peripherals:
             self.soc.add_peripheral(peripheral)
@@ -249,6 +231,8 @@ class SelftestCore(Elaboratable):
 
         # generate our domain clocks/resets
         m.submodules.car = platform.clock_domain_generator(clock_frequencies=CLOCK_FREQUENCIES_MHZ)
+
+        self.crg_tune.set_crg(m.submodules.car)
 
         # add our SoC to the design
         m.submodules.soc = self.soc

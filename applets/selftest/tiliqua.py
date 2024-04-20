@@ -104,7 +104,15 @@ class TiliquaDomainGenerator(Elaboratable):
     """ Clock generator for Tiliqua platform. """
 
     def __init__(self, *, clock_frequencies=None, clock_signal_name=None):
-        pass
+
+        self.phase_sel  = Signal(2, reset = 0)
+        self.phase_dir  = Signal(1, reset = 1)
+        self.phase_step = Signal(1, reset = 1)
+        self.phase_load = Signal(1, reset = 1)
+
+        self.slip_hr2x   = Signal(1, reset = 0)
+        self.slip_hr2x90 = Signal(1, reset = 0)
+
 
     def elaborate(self, platform):
         m = Module()
@@ -176,11 +184,11 @@ class TiliquaDomainGenerator(Elaboratable):
 
                 # Control signals.
                 i_RST=reset,
-                i_PHASESEL0=0,
-                i_PHASESEL1=0,
-                i_PHASEDIR=1,
-                i_PHASESTEP=1,
-                i_PHASELOADREG=1,
+                i_PHASESEL0=self.phase_sel[0], # TODO: check index?
+                i_PHASESEL1=self.phase_sel[1],
+                i_PHASEDIR=self.phase_dir,
+                i_PHASESTEP=self.phase_step,
+                i_PHASELOADREG=self.phase_load,
                 i_STDBY=0,
                 i_PLLWAKESYNC=0,
 
@@ -271,7 +279,7 @@ class TiliquaDomainGenerator(Elaboratable):
 
             i_CLKI=ClockSignal("hr2x"),
             i_RST=~locked120,
-            i_ALIGNWD=0,
+            i_ALIGNWD=self.slip_hr2x,
 
             o_CDIVX=ClockSignal("hr"),
         )
@@ -282,7 +290,7 @@ class TiliquaDomainGenerator(Elaboratable):
 
             i_CLKI=ClockSignal("hr2x_90"),
             i_RST=~locked120,
-            i_ALIGNWD=0,
+            i_ALIGNWD=self.slip_hr2x90,
 
             o_CDIVX=ClockSignal("hr_90"),
         )

@@ -199,7 +199,6 @@ class HyperRAMX2(Peripheral, Elaboratable):
 
         bytes_per_word = self.bus.data_width // self.bus.granularity
         granularity_bits = log2_int(bytes_per_word)
-        print(granularity_bits)
 
         mmap = MemoryMap(addr_width=self.bus.addr_width + granularity_bits,
                          data_width=self.bus.granularity,
@@ -428,5 +427,52 @@ class HyperRAMX2(Peripheral, Elaboratable):
                         m.d.sync += die_address.eq(
                             die_address|cr_select if multi_cr else 1),
                         m.next = "WRITE-CR"
+
+        return m
+
+class HyperRAMX2Tuner(Peripheral, Elaboratable):
+
+    def __init__(self, *, hyperram_instance):
+        super().__init__()
+
+        self.hyperram = hyperram_instance
+
+        # peripheral control registers
+        regs                = self.csr_bank()
+        self._io_loadn      = regs.csr(1, "w")
+        self._io_move       = regs.csr(1, "w")
+        self._io_direction  = regs.csr(1, "w")
+
+        self._clk_loadn      = regs.csr(1, "w")
+        self._clk_move       = regs.csr(1, "w")
+        self._clk_direction  = regs.csr(1, "w")
+
+        # peripheral bus
+        self._bridge = self.bridge(data_width=32, granularity=8, alignment=2)
+        self.bus     = self._bridge.bus
+
+    def elaborate(self, platform):
+        m = Module()
+
+        with m.If(self._io_loadn.w_stb):
+            m.d.sync += self.hyperram.dly_io.loadn.eq(self._io_loadn.w_data)
+
+        with m.If(self._io_move.w_stb):
+            m.d.sync += self.hyperram.dly_io.move.eq(self._io_move.w_data)
+
+        with m.If(self._io_direction.w_stb):
+            m.d.sync += self.hyperram.dly_io.direction.eq(self._io_direction.w_data)
+
+        with m.If(self._clk_loadn.w_stb):
+            m.d.sync += self.hyperram.dly_clk.loadn.eq(self._clk_loadn.w_data)
+
+        with m.If(self._clk_move.w_stb):
+            m.d.sync += self.hyperram.dly_clk.move.eq(self._clk_move.w_data)
+
+        with m.If(self._clk_direction.w_stb):
+            m.d.sync += self.hyperram.dly_clk.direction.eq(self._clk_direction.w_data)
+
+        # submodules
+        m.submodules.bridge = self._bridge
 
         return m
