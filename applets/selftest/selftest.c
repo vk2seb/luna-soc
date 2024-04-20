@@ -246,6 +246,12 @@ static int basic_memtest(void){
 
     flush_caches();
 
+	if(*((volatile uint32_t*)HYPERRAM_BASE) != 0x0) {
+        uart_puts("nzero: ");
+        uart_print_word(*((volatile uint32_t*)HYPERRAM_BASE));
+        uart_puts("\n");
+    }
+
 	if(*((volatile uint32_t*)HYPERRAM_BASE) != 0xFF55AACD)
 		return 0;
 
@@ -266,6 +272,10 @@ void hyperram_init(void){
 	int window = 0;
 	int clk_del = 0;
 	int io_del = 0;
+
+    // FOR ILA FIXME
+	hyperram_tune_io_loadn_write(0);
+    basic_memtest();
 
 	while(clk_del < 128){
 		set_clk_delay(clk_del >> 2);

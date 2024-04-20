@@ -215,6 +215,25 @@ class HyperRAMX2(Peripheral, Elaboratable):
         self.cr1_preset = cr1_preset
         self.dual_die_control = dual_die_control
 
+        """
+        self.dbg = [
+            bus,
+            sr_out,
+            sr_in,
+            sr_rwds_in,
+            sr_rwds_out,
+            cs,
+            clk,
+            phy.dq.i,
+            phy.dq.o,
+            phy.dq.oe,
+            phy.rwds.i,
+            phy.rwds.o,
+            phy.rwds.oe,
+        ]
+        """
+
+
     @property
     def constant_map(self):
         return ConstantMap(
@@ -427,6 +446,7 @@ class HyperRAMX2(Peripheral, Elaboratable):
                         m.d.sync += die_address.eq(
                             die_address|cr_select if multi_cr else 1),
                         m.next = "WRITE-CR"
+
 
         return m
 

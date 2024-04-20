@@ -5,7 +5,7 @@
 # Copyright (c) 2020 Great Scott Gadgets <info@greatscottgadgets.com>
 # SPDX-License-Identifier: BSD-3-Clause
 
-from amaranth                      import Cat, ClockSignal, Elaboratable, Module, ResetSignal
+from amaranth                      import Cat, ClockSignal, Elaboratable, Module, ResetSignal, Signal
 from amaranth.hdl.rec              import Record
 
 from amaranth_stdio.serial         import AsyncSerial
@@ -25,6 +25,10 @@ from luna_soc.gateware.soc         import LunaSoC
 from luna_soc.gateware.csr         import GpioPeripheral, LedPeripheral, UARTPeripheral
 
 from luna_soc.util.readbin         import get_mem_data
+
+from luna.gateware.debug.ila import AsyncSerialILA
+
+from amaranth.build import *
 
 import tiliqua
 
@@ -217,6 +221,8 @@ class SelftestCore(Elaboratable):
 
         hram = HyperRAMX2(name="hyperramx2")
         hyperram_tune = HyperRAMX2Tuner(hyperram_instance=hram)
+        self.hram = hram
+        self.hyperram_tune = hyperram_tune
 
         self.crg_tune = CRGTuner()
 
@@ -245,6 +251,67 @@ class SelftestCore(Elaboratable):
         ]
         if hasattr(uart_io.tx, 'oe'):
             m.d.comb += uart_io.tx.oe.eq(~self.soc.uart._phy.tx.rdy)
+
+        test_signal = Signal(32, reset=0xDEADBEEF)
+
+        phy_dq_i = Signal(32)
+        phy_dq_o = Signal(32)
+        phy_dq_oe = Signal(32)
+        phy_rwds_i = Signal(4)
+        phy_rwds_o = Signal(4)
+        phy_rwds_oe = Signal(4)
+
+        m.d.comb += [
+            phy_dq_i.eq(self.hram.phy.dq.i),
+            phy_dq_o.eq(self.hram.phy.dq.o),
+            phy_dq_oe.eq(self.hram.phy.dq.oe),
+            phy_rwds_i.eq(self.hram.phy.rwds.i),
+            phy_rwds_o.eq(self.hram.phy.rwds.o),
+            phy_rwds_oe.eq(self.hram.phy.rwds.oe),
+        ]
+
+        ila_signals = [
+            test_signal,
+            self.hram.bus.cyc,
+            self.hram.bus.stb,
+            self.hram.bus.adr,
+            self.hram.bus.we,
+            self.hram.bus.dat_r,
+            self.hram.bus.dat_w,
+            self.hram.bus.ack,
+            self.hram.bus.cti,
+
+            phy_dq_i,
+            phy_dq_o,
+            phy_dq_oe,
+            phy_rwds_i,
+            phy_rwds_o,
+            phy_rwds_oe,
+        ]
+
+        for s in ila_signals:
+            print(s)
+
+        self.ila = AsyncSerialILA(signals=ila_signals,
+                                  sample_depth=2048, divisor=60,
+                                  domain='sync', sample_rate=60e6) # 1MBaud on USB clock
+
+        pmod_uart = [
+            Resource("pmod_uart", 0,
+                Subsignal("tx",  Pins("1", conn=("pmod", 0), dir='o')),
+                Subsignal("rx",  Pins("2", conn=("pmod", 0), dir='i')),
+                Attrs(IO_TYPE="LVCMOS33"),
+            )
+        ]
+
+        platform.add_resources(pmod_uart)
+
+        m.d.comb += [
+            self.ila.trigger.eq(self.hyperram_tune._io_loadn.w_stb),
+            platform.request("pmod_uart").tx.o.eq(self.ila.tx),
+        ]
+
+        m.submodules.ila = self.ila
 
         return m
 
@@ -308,3 +375,7 @@ if __name__ == "__main__":
 
     design = SelftestCore()
     top_level_cli(design)
+
+    from luna.gateware.debug.ila import AsyncSerialILAFrontend
+    frontend = AsyncSerialILAFrontend("/dev/ttyUSB1", baudrate=1000000, ila=design.ila)
+    frontend.emit_vcd("out.vcd")
