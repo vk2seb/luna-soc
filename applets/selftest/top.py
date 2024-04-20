@@ -272,6 +272,9 @@ class SelftestCore(Elaboratable):
 
         ila_signals = [
             test_signal,
+
+            self.hram.fsm_dbg,
+
             self.hram.bus.cyc,
             self.hram.bus.stb,
             self.hram.bus.adr,
@@ -280,6 +283,13 @@ class SelftestCore(Elaboratable):
             self.hram.bus.dat_w,
             self.hram.bus.ack,
             self.hram.bus.cti,
+
+            self.hram.sr_out,
+            self.hram.sr_in,
+            self.hram.sr_rwds_in,
+            self.hram.sr_rwds_out,
+            self.hram.cs,
+            self.hram.clk,
 
             phy_dq_i,
             phy_dq_o,

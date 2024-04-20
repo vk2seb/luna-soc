@@ -215,24 +215,15 @@ class HyperRAMX2(Peripheral, Elaboratable):
         self.cr1_preset = cr1_preset
         self.dual_die_control = dual_die_control
 
-        """
-        self.dbg = [
-            bus,
-            sr_out,
-            sr_in,
-            sr_rwds_in,
-            sr_rwds_out,
-            cs,
-            clk,
-            phy.dq.i,
-            phy.dq.o,
-            phy.dq.oe,
-            phy.rwds.i,
-            phy.rwds.o,
-            phy.rwds.oe,
-        ]
-        """
+        self.clk = Signal()
+        self.cs = Signal()
+        self.ca = Signal(48)
+        self.sr_in = Signal(64)
+        self.sr_out = Signal(64)
+        self.sr_rwds_in = Signal(8)
+        self.sr_rwds_out = Signal(8)
 
+        self.fsm_dbg = Signal(8)
 
     @property
     def constant_map(self):
@@ -248,13 +239,13 @@ class HyperRAMX2(Peripheral, Elaboratable):
 
         # # #
 
-        clk         = Signal()
-        cs          = Signal()
-        ca          = Signal(48)
-        sr_in       = Signal(64)
-        sr_out      = Signal(64)
-        sr_rwds_in  = Signal(8)
-        sr_rwds_out = Signal(8)
+        clk         = self.clk
+        cs          = self.cs
+        ca          = self.ca
+        sr_in       = self.sr_in
+        sr_out      = self.sr_out
+        sr_rwds_in  = self.sr_rwds_in
+        sr_rwds_out = self.sr_rwds_out
 
         timeout_counter = Signal(6)
 
@@ -447,6 +438,9 @@ class HyperRAMX2(Peripheral, Elaboratable):
                             die_address|cr_select if multi_cr else 1),
                         m.next = "WRITE-CR"
 
+        m.d.comb += [
+            self.fsm_dbg.eq(fsm.state)
+        ]
 
         return m
 
