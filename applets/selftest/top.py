@@ -5,7 +5,7 @@
 # Copyright (c) 2020 Great Scott Gadgets <info@greatscottgadgets.com>
 # SPDX-License-Identifier: BSD-3-Clause
 
-from amaranth                      import Cat, ClockSignal, Elaboratable, Module, ResetSignal
+from amaranth                      import Cat, ClockSignal, Elaboratable, Module, ResetSignal, Signal
 from amaranth.hdl.rec              import Record
 
 from amaranth_stdio.serial         import AsyncSerial
@@ -16,7 +16,6 @@ from lambdasoc.periph.serial       import AsyncSerialPeripheral
 from lambdasoc.periph.timer        import TimerPeripheral
 
 from luna                          import configure_default_logging
-from luna.gateware.interface.psram import HyperRAMInterface, HyperRAMPHY
 from luna.gateware.interface.ulpi  import ULPIRegisterWindow
 from luna.gateware.usb.usb2.device import USBDevice
 
@@ -25,6 +24,11 @@ from luna_soc.gateware.csr.sram    import HyperRAMPeripheral
 from luna_soc.gateware.csr         import GpioPeripheral, LedPeripheral, UARTPeripheral
 
 from luna_soc.util.readbin         import get_mem_data
+
+from luna.gateware.debug.ila import AsyncSerialILA
+
+from amaranth.build import *
+
 
 import tiliqua
 
@@ -220,7 +224,7 @@ class SelftestCore(Elaboratable):
 
         # add a hyperram peripheral
         self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
-        self.soc.add_peripheral(self.soc.hyperram, addr=0x10000000, as_submodule=False)
+        self.soc.add_peripheral(self.soc.hyperram, addr=0x10000000)
 
         # ... add a timer, so our software can get precise timing ...
         self.soc.timer = TimerPeripheral(width=32)
@@ -265,6 +269,61 @@ class SelftestCore(Elaboratable):
         ]
         if hasattr(uart_io.tx, 'oe'):
             m.d.comb += uart_io.tx.oe.eq(~self.soc.uart._phy.tx.rdy)
+
+        test_signal = Signal(32, reset=0xDEADBEEF)
+
+        ila_signals = [
+            test_signal,
+
+            self.soc.hyperram.bus.cyc,
+            self.soc.hyperram.bus.stb,
+            self.soc.hyperram.bus.adr,
+            self.soc.hyperram.bus.we,
+            self.soc.hyperram.bus.dat_r,
+            self.soc.hyperram.bus.dat_w,
+            self.soc.hyperram.bus.ack,
+            self.soc.hyperram.bus.cti,
+
+            self.soc.hyperram.psram.address,
+            self.soc.hyperram.psram.register_space,
+            self.soc.hyperram.psram.perform_write,
+            self.soc.hyperram.psram.single_page,
+            self.soc.hyperram.psram.start_transfer,
+
+            self.soc.hyperram.psram.final_word,
+            self.soc.hyperram.psram.read_data,
+            self.soc.hyperram.psram.write_data,
+
+            self.soc.hyperram.psram.idle,
+            self.soc.hyperram.psram.read_ready,
+            self.soc.hyperram.psram.write_ready,
+
+            self.soc.hyperram.psram.fsm_state,
+        ]
+
+        for s in ila_signals:
+            print(s)
+
+        self.ila = AsyncSerialILA(signals=ila_signals,
+                                  sample_depth=2048, divisor=60,
+                                  domain='sync', sample_rate=60e6) # 1MBaud on USB clock
+
+        pmod_uart = [
+            Resource("pmod_uart", 0,
+                Subsignal("tx",  Pins("1", conn=("pmod", 0), dir='o')),
+                Subsignal("rx",  Pins("2", conn=("pmod", 0), dir='i')),
+                Attrs(IO_TYPE="LVCMOS33"),
+            )
+        ]
+
+        platform.add_resources(pmod_uart)
+
+        m.d.comb += [
+            self.ila.trigger.eq(self.soc.hyperram.bus.cyc),
+            platform.request("pmod_uart").tx.o.eq(self.ila.tx),
+        ]
+
+        m.submodules.ila = self.ila
 
         return m
 
@@ -328,3 +387,7 @@ if __name__ == "__main__":
 
     design = SelftestCore()
     top_level_cli(design)
+
+    from luna.gateware.debug.ila import AsyncSerialILAFrontend
+    frontend = AsyncSerialILAFrontend("/dev/ttyUSB1", baudrate=1000000, ila=design.ila)
+    frontend.emit_vcd("out.vcd")

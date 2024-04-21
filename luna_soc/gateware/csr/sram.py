@@ -13,6 +13,7 @@ from amaranth_soc.periph import ConstantMap
 
 from lambdasoc.periph import Peripheral
 
+from luna.gateware.interface.psram import HyperRAMInterface, HyperRAMPHY
 
 __all__ = ["SRAMPeripheral"]
 
@@ -167,6 +168,9 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
         self.size        = size
         self.granularity = granularity
 
+        self.psram_phy = HyperRAMPHY(bus=None)
+        self.psram = HyperRAMInterface(phy=self.psram_phy.phy)
+
     @property
     def constant_map(self):
         return ConstantMap(
@@ -176,21 +180,19 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        ram_bus = platform.request('ram')
-        psram_phy = HyperRAMPHY(bus=ram_bus)
-        psram = HyperRAMInterface(phy=psram_phy.phy)
+        self.psram_phy.bus = platform.request('ram')
         m.submodules += [self.psram_phy, self.psram]
+        psram = self.psram
 
         ## TODO adr match granularity 32 -> 16 and use sel[i]
 
         # Hook up psram to bus sans strobes / cmds/
         m.d.comb += [
-            ram_bus.reset.o        .eq(0),
+            self.psram_phy.bus.reset.o        .eq(0),
             psram.single_page      .eq(0),
             psram.register_space   .eq(0),
             psram.final_word       .eq(1),
             psram.address.eq(self.bus.adr),
-            self.bus.dat_r.eq(psram.read_data),
             psram.write_data.eq(self.bus.dat_w),
             psram.perform_write.eq(self.bus.we),
             psram.start_transfer.eq(self.bus.cyc & self.bus.stb & psram.idle),
@@ -203,4 +205,10 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
             ((psram.read_ready  & ~self.bus.we) |
              (psram.write_ready & self.bus.we))
         )
+
+        m.d.sync += [
+            self.bus.dat_r.eq(psram.read_data),
+        ]
+
+        return m
 
