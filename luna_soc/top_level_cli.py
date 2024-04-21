@@ -209,7 +209,8 @@ def _build_gateware(args, fragment, platform, build_dir):
     products = platform.build(
         fragment,
         do_program=args.upload,
-        build_dir=build_dir
+        build_dir=build_dir,
+        nextpnr_opts="--timing-allow-fail"
     )
 
     # Disable UnusedElaboarable warnings again.

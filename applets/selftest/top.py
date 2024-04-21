@@ -19,9 +19,10 @@ from luna                          import configure_default_logging
 from luna.gateware.interface.ulpi  import ULPIRegisterWindow
 from luna.gateware.usb.usb2.device import USBDevice
 
-from luna_soc.gateware.soc         import LunaSoC
-from luna_soc.gateware.csr.sram    import HyperRAMPeripheral
-from luna_soc.gateware.csr         import GpioPeripheral, LedPeripheral, UARTPeripheral
+from luna_soc.gateware.cpu.vexriscv              import VexRiscv
+from luna_soc.gateware.soc           import LunaSoC
+from luna_soc.gateware.csr.sram      import HyperRAMPeripheral, SRAMPeripheral
+from luna_soc.gateware.csr           import GpioPeripheral, LedPeripheral, UARTPeripheral
 
 from luna_soc.util.readbin         import get_mem_data
 
@@ -198,29 +199,26 @@ class PSRAMRegisterPeripheral(Peripheral, Elaboratable):
 
 # - SelftestCore --------------------------------------------------------------
 
-# TODO delete
-from lambdasoc.periph.sram   import SRAMPeripheral
-
 class SelftestCore(Elaboratable):
     def __init__(self):
         clock_frequency = int(CLOCK_FREQUENCIES_MHZ["sync"] * 1e6)
 
         # create our SoC
         self.soc = LunaSoC(
-            cpu=MinervaCPU(
-                with_debug    = False,
-                with_dcache   = True,
-                dcache_nlines = 16,
-                dcache_nwords = 4,
-                dcache_nways  = 1,
-                dcache_base   = 0x10000000,
-                dcache_limit  = 0x10010000,
-                with_muldiv   = True,
-                reset_address = 0x00000000,
-            ),
+            cpu=VexRiscv(reset_addr=0x00000000, variant="cynthion"),
             clock_frequency=clock_frequency,
         )
 
+        # ... add our UART peripheral ...
+        self.uart_pins = Record([
+            ('rx', [('i', 1)]),
+            ('tx', [('o', 1)])
+        ])
+
+        # ... add bios and core peripherals ...
+        self.soc.add_bios_and_peripherals(uart_pins=self.uart_pins)
+
+        """
         # ... read our firmware binary ...
         firmware = get_mem_data("selftest.bin", data_width=32, endianness="little")
 
@@ -231,26 +229,11 @@ class SelftestCore(Elaboratable):
         # ... and a RAM for execution ...
         self.soc.scratchpad = SRAMPeripheral(size=0x4000)
         self.soc.add_peripheral(self.soc.scratchpad, addr=0x00004000, as_submodule=False)
+        """
 
         # add a hyperram peripheral
         self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
-        self.soc.add_peripheral(self.soc.hyperram, addr=0x10000000)
-
-        # ... add a timer, so our software can get precise timing ...
-        self.soc.timer = TimerPeripheral(width=32)
-        self.soc.add_peripheral(self.soc.timer, as_submodule=False)
-
-        # ... add our UART peripheral ...
-        self.uart_pins = Record([
-            ('rx', [('i', 1)]),
-            ('tx', [('o', 1)])
-        ])
-        self.soc.uart = AsyncSerialPeripheral(core=AsyncSerial(
-            data_bits = 8,
-            divisor   = int(clock_frequency // 115200),
-            pins      = self.uart_pins,
-        ))
-        self.soc.add_peripheral(self.soc.uart, as_submodule=False)
+        self.soc.add_peripheral(self.soc.hyperram, addr=0x20000000)
 
         # ... and add our peripherals under test.
         peripherals = (
@@ -396,6 +379,22 @@ if __name__ == "__main__":
     from luna_soc import top_level_cli
 
     design = SelftestCore()
+
+    build_dir = os.path.join("build")
+
+    # TODO fix litex build
+    thirdparty = os.path.join(build_dir, "lambdasoc.soc.cpu/bios/3rdparty/litex")
+    if not os.path.exists(thirdparty):
+        logging.info("Fixing build, creating output directory: {}".format(thirdparty))
+        os.makedirs(thirdparty)
+
+    # build litex bios
+    logging.info("Building bios")
+    design.soc.build(name="soc",
+                     build_dir=build_dir,
+                     do_init=True)
+
+
     top_level_cli(design)
 
     from luna.gateware.debug.ila import AsyncSerialILAFrontend
