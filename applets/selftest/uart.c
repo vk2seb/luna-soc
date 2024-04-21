@@ -74,3 +74,16 @@ void uart_print_word(uint16_t value)
 	uart_put_hexit((value >>  4) & 0x0f);
 	uart_put_hexit((value >>  0) & 0x0f);
 }
+
+void uart_print_u32(uint32_t value)
+{
+	uart_puts("0x");
+	uart_put_hexit((value >> 28) & 0x0f);
+	uart_put_hexit((value >> 24) & 0x0f);
+	uart_put_hexit((value >> 20) & 0x0f);
+	uart_put_hexit((value >> 16) & 0x0f);
+	uart_put_hexit((value >> 12) & 0x0f);
+	uart_put_hexit((value >>  8) & 0x0f);
+	uart_put_hexit((value >>  4) & 0x0f);
+	uart_put_hexit((value >>  0) & 0x0f);
+}

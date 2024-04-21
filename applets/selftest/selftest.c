@@ -163,11 +163,28 @@ bool ram_tests(void)
     }
     */
 
+    /*
     *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS) = 0xFF55AACD;
 
     if(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS) != 0x0) {
         uart_puts("nzero: ");
-        uart_print_word(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS));
+        uart_print_u32(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS));
+        uart_puts("\n");
+    }
+    */
+
+    uint32_t n = 16;
+    for(int i = 0; i != n; ++i) {
+        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i)     = 0xDEADBEEF;
+        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i + 1) = 0xAABBCCDD;
+    }
+
+    for(int i = 0; i != n; ++i) {
+        uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i);
+        uint32_t b = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i + 1);
+        uart_print_u32(a);
+        uart_puts("\n");
+        uart_print_u32(b);
         uart_puts("\n");
     }
 

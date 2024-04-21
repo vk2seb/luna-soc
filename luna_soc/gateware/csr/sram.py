@@ -184,6 +184,7 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
         m.submodules += [self.psram_phy, self.psram]
         psram = self.psram
 
+        """
         ## TODO adr match granularity 32 -> 16 and use sel[i]
 
         # Hook up psram to bus sans strobes / cmds/
@@ -209,6 +210,52 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
         m.d.sync += [
             self.bus.dat_r.eq(psram.read_data),
         ]
+        """
+
+        m.d.comb += [
+            self.psram_phy.bus.reset.o        .eq(0),
+            psram.single_page      .eq(0),
+            psram.register_space   .eq(0),
+            psram.perform_write.eq(self.bus.we),
+        ]
+
+        with m.FSM() as fsm:
+            with m.State('IDLE'):
+                with m.If(self.bus.cyc & self.bus.stb & psram.idle):
+                    m.next = 'WORD1'
+            with m.State('WORD1'):
+                m.d.sync += [
+                    psram.final_word.eq(0),
+                    psram.write_data.eq(self.bus.dat_w[0:16]),
+                    psram.address.eq(self.bus.adr << 2)
+                ]
+                m.d.comb += [
+                    psram.start_transfer.eq(1)
+                ]
+                m.next = 'WORD1-WAIT'
+            with m.State('WORD1-WAIT'):
+                with m.If(psram.read_ready):
+                    m.d.sync += [
+                        self.bus.dat_r[0:16].eq(psram.read_data),
+                        psram.final_word.eq(1)
+                    ]
+                    m.next = 'WORD2'
+                with m.If(psram.write_ready):
+                    m.d.sync += [
+                        psram.write_data.eq(self.bus.dat_w[16:32]),
+                        psram.final_word.eq(1)
+                    ]
+                    m.next = 'WORD2'
+            with m.State('WORD2'):
+                with m.If(psram.read_ready):
+                    m.d.sync += [
+                        self.bus.dat_r[16:32].eq(psram.read_data),
+                    ]
+                with m.If(psram.idle):
+                    m.d.comb += [
+                        self.bus.ack.eq(1)
+                    ]
+                    m.next = 'IDLE'
 
         return m
 
