@@ -125,3 +125,82 @@ class SRAMPeripheral(Peripheral, Elaboratable):
         )
 
         return m
+
+class HyperRAMPeripheral(Peripheral, Elaboratable):
+    """HyperRAM peripheral.
+
+    Parameters
+    ----------
+    size : int
+        Memory size in bytes.
+    data_width : int
+        Bus data width.
+    granularity : int
+        Bus granularity.
+
+    Attributes
+    ----------
+    bus : :class:`amaranth_soc.wishbone.Interface`
+        Wishbone bus interface.
+    """
+    def __init__(self, *, size, data_width=32, granularity=8):
+        super().__init__()
+
+        if not isinstance(size, int) or size <= 0 or size & size-1:
+            raise ValueError("Size must be an integer power of two, not {!r}"
+                             .format(size))
+        if size < data_width // granularity:
+            raise ValueError("Size {} cannot be lesser than the data width/granularity ratio "
+                             "of {} ({} / {})"
+                              .format(size, data_width // granularity, data_width, granularity))
+
+        self.mem_depth = (size * granularity) // data_width
+
+        self.bus = wishbone.Interface(addr_width=log2_int(self.mem_depth),
+                                      data_width=data_width, granularity=granularity,
+                                      features={"cti", "bte"})
+
+        map = MemoryMap(addr_width=log2_int(size), data_width=granularity, name=self.name)
+        map.add_resource("placeholder_hyperram", name="mem", size=size)
+        self.bus.memory_map = map
+
+        self.size        = size
+        self.granularity = granularity
+
+    @property
+    def constant_map(self):
+        return ConstantMap(
+            SIZE = self.size,
+        )
+
+    def elaborate(self, platform):
+        m = Module()
+
+        ram_bus = platform.request('ram')
+        psram_phy = HyperRAMPHY(bus=ram_bus)
+        psram = HyperRAMInterface(phy=psram_phy.phy)
+        m.submodules += [self.psram_phy, self.psram]
+
+        ## TODO adr match granularity 32 -> 16 and use sel[i]
+
+        # Hook up psram to bus sans strobes / cmds/
+        m.d.comb += [
+            ram_bus.reset.o        .eq(0),
+            psram.single_page      .eq(0),
+            psram.register_space   .eq(0),
+            psram.final_word       .eq(1),
+            psram.address.eq(self.bus.adr),
+            self.bus.dat_r.eq(psram.read_data),
+            psram.write_data.eq(self.bus.dat_w),
+            psram.perform_write.eq(self.bus.we),
+            psram.start_transfer.eq(self.bus.cyc & self.bus.stb & psram.idle),
+        ]
+
+        m.d.sync += self.bus.ack.eq(
+            ~self.bus.ack &
+            self.bus.cyc &
+            self.bus.stb &
+            ((psram.read_ready  & ~self.bus.we) |
+             (psram.write_ready & self.bus.we))
+        )
+

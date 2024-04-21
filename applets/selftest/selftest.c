@@ -126,6 +126,7 @@ bool ram_tests(void)
     }
     */
 
+    /*
     uint32_t addr = 0x1000;
     uint32_t nbit = 16;
     uint32_t n = 32;
@@ -158,6 +159,15 @@ bool ram_tests(void)
 
         uint32_t rd = psram_rvalue_read();
         uart_print_word(rd);
+        uart_puts("\n");
+    }
+    */
+
+    *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS) = 0xFF55AACD;
+
+    if(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS) != 0x0) {
+        uart_puts("nzero: ");
+        uart_print_word(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS));
         uart_puts("\n");
     }
 

@@ -21,6 +21,7 @@ from luna.gateware.interface.ulpi  import ULPIRegisterWindow
 from luna.gateware.usb.usb2.device import USBDevice
 
 from luna_soc.gateware.soc         import LunaSoC
+from luna_soc.gateware.csr.sram    import HyperRAMPeripheral
 from luna_soc.gateware.csr         import GpioPeripheral, LedPeripheral, UARTPeripheral
 
 from luna_soc.util.readbin         import get_mem_data
@@ -217,6 +218,10 @@ class SelftestCore(Elaboratable):
         self.soc.scratchpad = SRAMPeripheral(size=0x4000)
         self.soc.add_peripheral(self.soc.scratchpad, addr=0x00004000, as_submodule=False)
 
+        # add a hyperram peripheral
+        self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
+        self.soc.add_peripheral(self.soc.hyperram, addr=0x10000000, as_submodule=False)
+
         # ... add a timer, so our software can get precise timing ...
         self.soc.timer = TimerPeripheral(width=32)
         self.soc.add_peripheral(self.soc.timer, as_submodule=False)
@@ -237,7 +242,7 @@ class SelftestCore(Elaboratable):
         peripherals = (
             LedPeripheral(name="leds"),
             ULPIRegisterPeripheral(name="target_ulpi",   io_resource_name="target_phy"),
-            PSRAMRegisterPeripheral(name="psram"),
+            #PSRAMRegisterPeripheral(name="psram"),
         )
 
         for peripheral in peripherals:
