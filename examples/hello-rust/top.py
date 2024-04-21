@@ -10,6 +10,7 @@ from luna.gateware.usb.usb2.device               import USBDevice
 from luna_soc.gateware.cpu.vexriscv              import VexRiscv
 from luna_soc.gateware.soc                       import LunaSoC
 from luna_soc.gateware.csr                       import GpioPeripheral, LedPeripheral
+from luna_soc.gateware.csr.hyperram              import HyperRAMPeripheral
 
 from amaranth                                    import Elaboratable, Module, Cat
 from amaranth.hdl.rec                            import Record
@@ -47,11 +48,9 @@ class HelloSoc(Elaboratable):
         self.leds = LedPeripheral()
         self.soc.add_peripheral(self.leds, addr=0xf0001000)
 
-        # ... add two gpio peripherals for our PMOD connectors ...
-        self.gpioa = GpioPeripheral(width=8)
-        self.gpiob = GpioPeripheral(width=8)
-        self.soc.add_peripheral(self.gpioa, addr=0xf0002000)
-        self.soc.add_peripheral(self.gpiob, addr=0xf0002100)
+        # ... add memory-mapped hyperram peripheral (128Mbit)
+        self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
+        self.soc.add_peripheral(self.soc.hyperram, addr=0x20000000)
 
     def elaborate(self, platform):
         m = Module()
@@ -68,14 +67,6 @@ class HelloSoc(Elaboratable):
         ]
         if hasattr(uart_io.tx, 'oe'):
             m.d.comb += uart_io.tx.oe.eq(~self.soc.uart._phy.tx.rdy),
-
-        # connect the GpioPeripheral to the pmod ports
-        pmoda_io = platform.request("user_pmod", 0)
-        pmodb_io = platform.request("user_pmod", 1)
-        m.d.comb += [
-            self.gpioa.pins.connect(pmoda_io),
-            self.gpiob.pins.connect(pmodb_io)
-        ]
 
         return m
 
@@ -127,6 +118,7 @@ if __name__ == "__main__":
     overrides = {
         "debug_verilog": True,
         "verbose": False,
+        "nextpnr_opts": "--timing-allow-fail"
     }
     products = platform.build(design, do_program=False, build_dir=build_dir, **overrides)
 

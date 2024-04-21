@@ -1,4 +1,4 @@
-#!/usr/bin/env zsh
+#!/bin/bash
 
 # configuration
 : ${UART:=/dev/ttyACM0}
@@ -15,10 +15,10 @@ cargo objcopy --release --bin $NAME -- -Obinary $1.bin
 
 # configure fpga with soc bitstream
 echo "Configuring fpga: $BITSTREAM"
-apollo configure $BITSTREAM 2>/dev/null
+sudo openFPGALoader -c dirtyJtag $BITSTREAM
 
 # lxterm command
-LXTERM="litex_term --kernel $1.bin --kernel-adr $BASE_MEM --speed 115200 $UART"
+LXTERM="sudo litex_term --kernel $1.bin --kernel-adr $BASE_MEM --speed 115200 --safe $UART"
 
 # flash firmware to soc
 echo "Flashing: $1.bin"

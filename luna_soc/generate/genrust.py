@@ -38,7 +38,7 @@ class GenRust:
         regions = set()
         emit("MEMORY {")
         for window, (start, stop, ratio) in self._soc.memory_map.windows():
-            if window.name not in ["bootrom", "scratchpad", "mainram"]:
+            if window.name not in ["bootrom", "scratchpad", "mainram", "hyperram"]:
                 logging.debug("Skipping non-memory resource: {}".format(window.name))
                 continue
             emit(f"    {window.name} : ORIGIN = 0x{start:08x}, LENGTH = 0x{stop-start:08x}")
