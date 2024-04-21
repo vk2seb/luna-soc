@@ -16,7 +16,7 @@ from lambdasoc.periph.serial       import AsyncSerialPeripheral
 from lambdasoc.periph.timer        import TimerPeripheral
 
 from luna                          import configure_default_logging
-from luna.gateware.interface.psram import HyperRAMInterface
+from luna.gateware.interface.psram import HyperRAMInterface, HyperRAMPHY
 from luna.gateware.interface.ulpi  import ULPIRegisterWindow
 from luna.gateware.usb.usb2.device import USBDevice
 
@@ -24,6 +24,8 @@ from luna_soc.gateware.soc         import LunaSoC
 from luna_soc.gateware.csr         import GpioPeripheral, LedPeripheral, UARTPeripheral
 
 from luna_soc.util.readbin         import get_mem_data
+
+import tiliqua
 
 import logging
 import os
@@ -77,9 +79,9 @@ class ULPIRegisterPeripheral(Peripheral, Elaboratable):
             ulpi_reg_window.ulpi_dir      .eq(target_ulpi.dir.i),
             ulpi_reg_window.ulpi_next     .eq(target_ulpi.nxt.i),
 
-            target_ulpi.clk               .eq(ClockSignal("usb")),
-            target_ulpi.rst               .eq(ResetSignal("usb")),
-            target_ulpi.stp               .eq(ulpi_reg_window.ulpi_stop),
+            target_ulpi.clk.o             .eq(ClockSignal("usb")),
+            target_ulpi.rst.o             .eq(ResetSignal("usb")),
+            target_ulpi.stp.o             .eq(ulpi_reg_window.ulpi_stop),
             target_ulpi.data.o            .eq(ulpi_reg_window.ulpi_data_out),
             target_ulpi.data.oe           .eq(~target_ulpi.dir.i)
         ]
@@ -128,7 +130,9 @@ class PSRAMRegisterPeripheral(Peripheral, Elaboratable):
         # Create our registers...
         bank            = self.csr_bank()
         self._address   = bank.csr(32, "w")
-        self._value     = bank.csr(32, "r")
+        self._rvalue     = bank.csr(32, "r")
+        self._wvalue     = bank.csr(32, "w")
+        self._write     = bank.csr(1,  "w")
         self._busy      = bank.csr(1,  "r")
 
         # ... and convert our register into a Wishbone peripheral.
@@ -144,22 +148,25 @@ class PSRAMRegisterPeripheral(Peripheral, Elaboratable):
         # HyperRAM interface window.
         #
         ram_bus = platform.request('ram')
-        m.submodules.psram = psram = HyperRAMInterface(bus=ram_bus, clock_skew=platform.ram_timings['clock_skew'])
+        psram_phy = HyperRAMPHY(bus=ram_bus)
+        psram = HyperRAMInterface(phy=psram_phy.phy)
+        m.submodules += [psram_phy, psram]
 
         # Hook up our PSRAM.
         m.d.comb += [
-            ram_bus.reset          .eq(0),
+            ram_bus.reset.o        .eq(0),
             psram.single_page      .eq(0),
-            psram.perform_write    .eq(0),
-            psram.register_space   .eq(1),
+            psram.perform_write    .eq(self._write.w_data),
+            psram.register_space   .eq(0),
             psram.final_word       .eq(1),
+            psram.write_data       .eq(self._wvalue.w_data),
         ]
 
         #
         # Address register logic.
         #
 
-        # Perform a read request whenever the user writes the address register...
+        # Execute request whenever the user writes the address register...
         m.d.sync += psram.start_transfer.eq(self._address.w_stb)
 
         # And update the register address accordingly.
@@ -172,8 +179,8 @@ class PSRAMRegisterPeripheral(Peripheral, Elaboratable):
         #
 
         # Always report back the last read data.
-        with m.If(psram.new_data_ready):
-            m.d.sync += self._value.r_data.eq(psram.read_data)
+        with m.If(psram.read_ready):
+            m.d.sync += self._rvalue.r_data.eq(psram.read_data)
 
 
         #
@@ -230,8 +237,6 @@ class SelftestCore(Elaboratable):
         peripherals = (
             LedPeripheral(name="leds"),
             ULPIRegisterPeripheral(name="target_ulpi",   io_resource_name="target_phy"),
-            ULPIRegisterPeripheral(name="host_ulpi",     io_resource_name="host_phy"),
-            ULPIRegisterPeripheral(name="sideband_ulpi", io_resource_name="sideband_phy"),
             PSRAMRegisterPeripheral(name="psram"),
         )
 

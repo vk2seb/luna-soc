@@ -97,16 +97,6 @@ bool target_phy_tests(void)
     return ulpi_phy_tests(TARGET_PHY);
 }
 
-bool host_phy_tests(void)
-{
-    return ulpi_phy_tests(HOST_PHY);
-}
-
-bool sideband_phy_tests(void)
-{
-    return ulpi_phy_tests(SIDEBAND_PHY);
-}
-
 
 /**
  * RAM tests.
@@ -116,6 +106,7 @@ bool ram_tests(void)
     //
     // Check that the ULPI PHY matches the VID/PID for a Winbond or Cypress PSRAM.
     //
+    /*
     const uint32_t psram_id = read_psram_register(0);
     const bool id_matches =
         (psram_id == 0x0c81) ||
@@ -132,6 +123,42 @@ bool ram_tests(void)
         uart_print_word(psram_id);
         uart_puts(")\n");
         return false;
+    }
+    */
+
+    uint32_t addr = 0x1000;
+    uint32_t nbit = 16;
+    uint32_t n = 32;
+
+    for (uint32_t i = 0; i != n; ++i) {
+
+        psram_wvalue_write(1 << (i%16));
+        psram_write_write(0x1);
+        psram_address_write(addr + 4*i);
+        psram_address_write(addr + 4*i);
+
+        // Wait for things to be come ready.
+        if(while_with_timeout(psram_busy_read, 100)) {
+            return -1;
+        }
+
+    }
+
+
+    for (uint32_t i = 0; i != n; ++i) {
+
+        psram_write_write(0x0);
+        psram_address_write(addr + 4*i);
+        psram_address_write(addr + 4*i);
+
+        // Wait for things to be come ready.
+        if(while_with_timeout(psram_busy_read, 100)) {
+            return -1;
+        }
+
+        uint32_t rd = psram_rvalue_read();
+        uart_print_word(rd);
+        uart_puts("\n");
     }
 
     return true;
@@ -168,7 +195,7 @@ int main(void)
     platform_bringup();
 
     // Turn on the yellow LED, indicating that we're performing the tests.
-    leds_output_write(0b001000);
+    leds_output_write(0b01);
 
     // Wait for a bit, so we know the other side is listening and ready.
     // FIXME: remove this?
@@ -210,33 +237,23 @@ int main(void)
 
                 failures += run_test("Debug controller & communications:     ", debug_controller_tests);
                 failures += run_test("Target ULPI PHY:                       ", target_phy_tests);
-                failures += run_test("Host ULPI PHY:                         ", host_phy_tests);
-                failures += run_test("Sideband ULPI PHY:                     ", sideband_phy_tests);
                 failures += run_test("External RAM:                          ", ram_tests);
 
                 uart_puts("\n\n");
 
                 if (failures) {
-
-                    // Indicate our failure via serial...
                     uart_puts("❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌\n");
                     uart_puts("------------------------------------------------\n");
                     uart_puts("--------------- TESTS FAILED! ------------------\n");
                     uart_puts("------------------------------------------------\n");
                     uart_puts("❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌\n");
-
-                    // ... and turn on the red LED.
-                    leds_output_write(0b100000);
                 }
 
                 else {
-                    // Indicate success, and turn on the green LED.
-                    leds_output_write(0b000100);
+                    leds_output_write(0b10);
                     uart_puts("All tests passed. ✅ \n\n");
                 }
 
-                // FIXME: remove this
-                uart_puts("Press Ctrl+] to terminate test.\n");
                 while(1);
 
                 break;

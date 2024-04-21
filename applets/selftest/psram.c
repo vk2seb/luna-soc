@@ -14,6 +14,7 @@
 /**
  * Reads a value from a ULPI PHY register.
  */
+/*
 uint32_t read_psram_register(uint32_t address)
 {
 	// Wait for things to become ready.
@@ -32,3 +33,4 @@ uint32_t read_psram_register(uint32_t address)
 	// Finally, read the value back.
 	return psram_value_read();
 }
+*/
