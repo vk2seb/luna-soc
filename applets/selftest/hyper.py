@@ -1,6 +1,7 @@
 from amaranth import *
 from amaranth.hdl.rec              import Record
 from amaranth.lib.cdc import FFSynchronizer
+from amaranth.lib import data
 
 from amaranth.utils import log2_int
 from amaranth_soc import wishbone
@@ -48,7 +49,7 @@ class HyperBusPHY(Elaboratable):
 
         # Shift non DDR signals to match the FF's inside DDR modules.
         m.submodules += [
-            FFSynchronizer(self.cs,      pads.cs.o,    stages=3),
+            FFSynchronizer(~self.cs,     pads.cs.o,    stages=3),
             FFSynchronizer(self.rwds.oe, pads.rwds.oe, stages=3),
             FFSynchronizer(self.dq.oe,   pads.dq.oe,   stages=3),
         ]
@@ -81,7 +82,7 @@ class HyperBusPHY(Elaboratable):
                 i_LOADN     = self.dly_clk.loadn,
                 i_MOVE      = self.dly_clk.move,
                 i_DIRECTION = self.dly_clk.direction,
-                o_Z         = pads.clk
+                o_Z         = pads.clk.o
             )
         ]
 
@@ -184,8 +185,7 @@ class HyperRAMX2(Peripheral, Elaboratable):
      - Handle variable latency writes
      - Add Litex automated tests
     """
-    def __init__(self, *, name, latency = 5, cr0_preset = None,
-                 cr1_preset = None, dual_die_control = True):
+    def __init__(self, *, name, latency = 5):
 
         super().__init__(name=name)
 
@@ -211,9 +211,6 @@ class HyperRAMX2(Peripheral, Elaboratable):
         self.dly_clk = Record([("loadn", 1),("move", 1),("direction", 1)])
 
         self.latency = latency
-        self.cr0_preset = cr0_preset
-        self.cr1_preset = cr1_preset
-        self.dual_die_control = dual_die_control
 
         self.clk = Signal()
         self.cs = Signal()
@@ -257,33 +254,6 @@ class HyperRAMX2(Peripheral, Elaboratable):
             phy.dly_clk.eq(self.dly_clk),
         ]
 
-        # CR0/CR1 preset ---------------------------------------------------------------------------
-        preset_cr = True
-        multi_cr = False
-        die_address = Signal()
-        cr_select = Signal()
-        cr_value = Signal(16)
-
-        cr0_preset = self.cr0_preset
-        cr1_preset = self.cr1_preset
-        dual_die_control = self.dual_die_control
-
-        if cr0_preset is not None and cr1_preset is not None:
-            multi_cr = True
-            m.d.comb += cr_value.eq(Mux(cr_select, cr1_preset, cr0_preset))
-        elif cr0_preset is not None:
-            m.d.comb += [
-                cr_value.eq(cr0_preset),
-                cr_select.eq(0)
-            ]
-        elif cr1_preset is not None:
-            m.d.comb += [
-                cr_value.eq(cr1_preset),
-                cr_select.eq(1)
-            ]
-        else:
-            preset_cr = False
-
         m.d.comb += [
             phy.cs.eq(~cs),
             phy.clk_enable.eq(clk)
@@ -303,15 +273,38 @@ class HyperRAMX2(Peripheral, Elaboratable):
             phy.rwds.o.eq(sr_rwds_out[-4:])                # To HyperRAM
         ]
 
+        """
         # Command generation -----------------------------------------------------------------------
         m.d.comb += [
             ca[47].eq(~self.bus.we),          # R/W#
+            ca[46].eq(1),          # address space
             ca[45].eq(1),                     # Burst Type (Linear)
             ca[16:14+self.bus.addr_width].eq(
-                self.bus.adr[2:]),            # Row & Upper Column Address
-            ca[1:3].eq(self.bus.adr[0:2]),    # Lower Column Address
+                addr_c0[2:]),            # Row & Upper Column Address
+            ca[1:3].eq(addr_c0[0:2]),    # Lower Column Address
             ca[0].eq(0),                      # Lower Column Address
         ]
+        """
+
+        ca_layout = data.StructLayout({
+            "address_lo": 4,
+            "reserved": 13,
+            "address_hi": 28,
+            "is_multipage": 1,
+            "is_register": 1,
+            "is_read":   1,
+        })
+
+        ca_view = data.View(ca_layout, ca)
+
+        m.d.comb += [
+            ca_view.is_read.eq(1),
+            ca_view.is_register.eq(1),
+            ca_view.is_multipage.eq(0),
+            ca_view.address_hi.eq(0),
+            ca_view.address_lo.eq(0),
+        ]
+
 
         # FSM Sequencer ----------------------------------------------------------------------------
 
@@ -328,7 +321,7 @@ class HyperRAMX2(Peripheral, Elaboratable):
                     m.next = next_state
                 state = next_state
 
-        with m.FSM(reset="WRITE-CR" if preset_cr else "IDLE") as fsm:
+        with m.FSM(reset="IDLE") as fsm:
             with m.State("IDLE"):
                 with m.If(bus.cyc & bus.stb):
                     m.d.sync += cs.eq(1)
@@ -401,42 +394,6 @@ class HyperRAMX2(Peripheral, Elaboratable):
                 m.next = "WAIT"
 
             delayed_enter(fsm, "WAIT", "IDLE", 10)
-
-            if preset_cr:
-                with m.State("WRITE-CR"):
-                    m.d.sync += [
-                        cs.eq(1),
-                        phy.rwds.oe.eq(0),
-                    ]
-                    m.next = "CR-CA-SEND"
-                with m.State("CR-CA-SEND"):
-                    m.d.sync += [
-                        clk.eq(1),
-                        phy.dq.oe.eq(1),
-                        sr_out.eq(Cat(cr_value, cr_select, C(0, 23),
-                                  C(1, 11), die_address, C(0x600, 12))),
-                    ]
-                    m.next = "CR-CA-WAIT"
-                with m.State("CR-CA-WAIT"):
-                    m.next = "WRITE-CR-CLK-OFF"
-                with m.State("WRITE-CR-CLK-OFF"):
-                    m.d.sync += clk.eq(0),
-                    m.next = "WRITE-CR-DONE"
-                with m.State("WRITE-CR-DONE"):
-                    m.d.sync += [
-                        cs.eq(0),
-                        phy.dq.oe.eq(0),
-                    ]
-                    with m.If((die_address if dual_die_control else 1) &
-                              (cr_select if multi_cr else 1)):
-                        m.d.sync += cr_select.eq(0) if multi_cr else [],
-                        m.d.sync += die_address.eq(0),
-                        m.next = "CLEANUP"
-                    with m.Else():
-                        m.d.sync += cr_select.eq(~cr_select) if multi_cr else [],
-                        m.d.sync += die_address.eq(
-                            die_address|cr_select if multi_cr else 1),
-                        m.next = "WRITE-CR"
 
         m.d.comb += [
             self.fsm_dbg.eq(fsm.state)

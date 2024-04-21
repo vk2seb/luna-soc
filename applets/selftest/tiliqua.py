@@ -89,7 +89,7 @@ class _TiliquaPlatform(LatticeECP5Platform):
             Subsignal("clk",   DiffPairs("C3", "D3", dir="o"), Attrs(IO_TYPE="LVCMOS33D")),
             Subsignal("dq",    Pins("F2 B1 C2 E1 E3 E2 F3 G4", dir="io")),
             Subsignal("rwds",  Pins( "D1", dir="io")),
-            Subsignal("cs",    Pins("B2", dir="o")),
+            Subsignal("cs",    PinsN("B2", dir="o")),
             Subsignal("reset", PinsN("C1", dir="o")),
             Attrs(IO_TYPE="LVCMOS33", SLEWRATE="FAST")
         ),
@@ -124,7 +124,6 @@ class TiliquaDomainGenerator(Elaboratable):
         m.domains.hr_90  = ClockDomain()
         m.domains.sync   = ClockDomain()
         m.domains.usb    = ClockDomain()
-        m.domains.fast   = ClockDomain()
         m.domains.audio  = ClockDomain()
         m.domains.raw48  = ClockDomain()
 
@@ -299,10 +298,8 @@ class TiliquaDomainGenerator(Elaboratable):
         m.d.comb += [
             ClockSignal("usb")      .eq(ClockSignal("hr")),
             ClockSignal("sync")     .eq(ClockSignal("hr")),
-            ClockSignal("fast")     .eq(ClockSignal("hr")),
 
             ResetSignal("sync")     .eq(~locked120),
-            ResetSignal("fast")     .eq(~locked120),
             ResetSignal("usb")      .eq(~locked120),
 
             ResetSignal("hr")       .eq(~locked120),

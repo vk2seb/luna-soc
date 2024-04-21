@@ -275,6 +275,11 @@ void hyperram_init(void){
 
     // FOR ILA FIXME
 	hyperram_tune_io_loadn_write(0);
+
+    // read first
+	if(*((volatile uint32_t*)HYPERRAM_BASE) != 0xFF55AACD)
+		return;
+
     basic_memtest();
 
 	while(clk_del < 128){
