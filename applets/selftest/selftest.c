@@ -206,18 +206,18 @@ bool ram_tests(void)
 
     for(int i = 0; i != n; ++i) {
         if (i%2 == 0) {
-            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xAAAAAA00 + (i&0xFF);
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = i;
         } else {
-            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0x55555500 + (i&0xFF);
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = i;
         }
     }
 
     for(int i = 0; i != n; ++i) {
         bool ok = false;
         if (i%2 == 0) {
-            ok = (*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) == 0xAAAAAA00 + (i&0xFF));
+            ok = (*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) == i);
         } else {
-            ok = (*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) == 0x55555500 + (i&0xFF));
+            ok = (*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) == i);
         }
         if(!ok) {
             uart_puts("memtest FAIL @ ");
@@ -226,18 +226,27 @@ bool ram_tests(void)
             uart_print_u32(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i));
             uart_puts(" should be ");
             if (i%2 == 0) {
-               uart_print_u32(0xAAAAAA00 + (i&0xFF));
+               uart_print_u32(i);
             } else {
-               uart_print_u32(0x55555500 + (i&0xFF));
+               uart_print_u32(i);
             }
             uart_puts("\n");
         }
-        if(i % 1024*1024 == 0) {
+        if(i % (1024*1024 / 4) == 0) {
             uart_puts("memtest @ ");
             uart_print_u32((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
             uart_puts("\n");
         }
     }
+
+    uart_puts("\n");
+    uart_puts("\n");
+    uart_print_u32(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 0));
+    uart_puts("\n");
+    uart_print_u32(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 1024*1024));
+    uart_puts("\n");
+    uart_print_u32(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + (1024*1024*4-1)));
+    uart_puts("\n");
 
     for(int i = 0; i != n; ++i) {
         uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
