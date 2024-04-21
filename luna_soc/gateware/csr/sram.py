@@ -184,34 +184,6 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
         m.submodules += [self.psram_phy, self.psram]
         psram = self.psram
 
-        """
-        ## TODO adr match granularity 32 -> 16 and use sel[i]
-
-        # Hook up psram to bus sans strobes / cmds/
-        m.d.comb += [
-            self.psram_phy.bus.reset.o        .eq(0),
-            psram.single_page      .eq(0),
-            psram.register_space   .eq(0),
-            psram.final_word       .eq(1),
-            psram.address.eq(self.bus.adr),
-            psram.write_data.eq(self.bus.dat_w),
-            psram.perform_write.eq(self.bus.we),
-            psram.start_transfer.eq(self.bus.cyc & self.bus.stb & psram.idle),
-        ]
-
-        m.d.sync += self.bus.ack.eq(
-            ~self.bus.ack &
-            self.bus.cyc &
-            self.bus.stb &
-            ((psram.read_ready  & ~self.bus.we) |
-             (psram.write_ready & self.bus.we))
-        )
-
-        m.d.sync += [
-            self.bus.dat_r.eq(psram.read_data),
-        ]
-        """
-
         m.d.comb += [
             self.psram_phy.bus.reset.o        .eq(0),
             psram.single_page      .eq(0),
@@ -222,12 +194,14 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
         with m.FSM() as fsm:
             with m.State('IDLE'):
                 with m.If(self.bus.cyc & self.bus.stb & psram.idle):
+                    m.d.sync += [
+                        psram.address.eq(self.bus.adr << 1),
+                    ]
                     m.next = 'WORD1'
             with m.State('WORD1'):
                 m.d.sync += [
                     psram.final_word.eq(0),
                     psram.write_data.eq(self.bus.dat_w[0:16]),
-                    psram.address.eq(self.bus.adr << 2)
                 ]
                 m.d.comb += [
                     psram.start_transfer.eq(1)
@@ -237,25 +211,31 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
                 with m.If(psram.read_ready):
                     m.d.sync += [
                         self.bus.dat_r[0:16].eq(psram.read_data),
-                        psram.final_word.eq(1)
                     ]
-                    m.next = 'WORD2'
+
                 with m.If(psram.write_ready):
                     m.d.sync += [
                         psram.write_data.eq(self.bus.dat_w[16:32]),
-                        psram.final_word.eq(1)
                     ]
+
+                with m.If(psram.read_ready | psram.write_ready):
+                    with m.If(self.bus.cti != wishbone.CycleType.INCR_BURST):
+                        m.d.sync += psram.final_word.eq(1)
+                    with m.Else():
+                        m.d.sync += psram.final_word.eq(0)
                     m.next = 'WORD2'
+
             with m.State('WORD2'):
-                with m.If(psram.read_ready):
+                with m.If(psram.read_ready | psram.write_ready):
+                    m.d.comb +=  self.bus.ack.eq(1)
                     m.d.sync += [
                         self.bus.dat_r[16:32].eq(psram.read_data),
+                        psram.write_data.eq(self.bus.dat_w[0:16]),
                     ]
-                with m.If(psram.idle):
-                    m.d.comb += [
-                        self.bus.ack.eq(1)
-                    ]
-                    m.next = 'IDLE'
+                    with m.If(self.bus.cti != wishbone.CycleType.INCR_BURST):
+                        m.next = 'IDLE'
+                    with m.Else():
+                        m.next = 'WORD1-WAIT'
 
         return m
 

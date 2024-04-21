@@ -207,7 +207,17 @@ class SelftestCore(Elaboratable):
 
         # create our SoC
         self.soc = LunaSoC(
-            cpu=MinervaCPU(with_muldiv=True, with_debug=False),
+            cpu=MinervaCPU(
+                with_debug    = False,
+                with_dcache   = True,
+                dcache_nlines = 16,
+                dcache_nwords = 4,
+                dcache_nways  = 1,
+                dcache_base   = 0x10000000,
+                dcache_limit  = 0x10010000,
+                with_muldiv   = True,
+                reset_address = 0x00000000,
+            ),
             clock_frequency=clock_frequency,
         )
 

@@ -174,24 +174,67 @@ bool ram_tests(void)
     */
 
 
+    /*
     timer_ctr_write(0xFFFFFFFF);
 
     uint32_t before = timer_ctr_read();
 
     uint32_t n = 1024*256;
+
     for(int i = 0; i != n; ++i) {
-        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i)     = 0xDEADBEEF;
-        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i + 1) = 0xAABBCCDD;
+        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = i;
     }
 
     for(int i = 0; i != n; ++i) {
-        uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i);
-        uint32_t b = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + 2*i + 1);
+        uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
+        (void)a;
     }
 
     uint32_t after = timer_ctr_read();
 
     uart_print_u32(after);
+
+    uart_puts("\n");
+    uart_puts("\n");
+    */
+
+    uint32_t n = 16;
+
+    for(int i = 0; i != n; ++i) {
+        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xDEADBEEF;
+    }
+
+    for(int i = 0; i != n; ++i) {
+        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = i;
+    }
+
+    for(int i = 0; i != n; ++i) {
+        uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
+        (void)a;
+        /*
+        uart_print_u32(a);
+        uart_puts("\n");
+        */
+    }
+
+    for(int i = 0; i != n; ++i) {
+        uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
+        uart_print_u32(a);
+        uart_puts("\n");
+    }
+
+    uart_puts("\n");
+    uart_puts("\n");
+    timer_ctr_write(0xFFFFFFFF);
+    uint32_t before = timer_ctr_read();
+    n = 1024*1024;
+    for(int i = 0; i != n; ++i) {
+        uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
+        (void)a;
+    }
+    uint32_t after = timer_ctr_read();
+    uart_print_u32(after);
+
 
     return true;
 }
