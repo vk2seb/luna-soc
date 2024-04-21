@@ -198,7 +198,7 @@ bool ram_tests(void)
     uart_puts("\n");
     */
 
-    uint32_t n = 1024*1024;
+    uint32_t n = 1024*1024*4;
 
     for(int i = 0; i != n; ++i) {
         *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xDEADBEEF;
