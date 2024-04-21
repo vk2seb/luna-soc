@@ -198,7 +198,22 @@ bool ram_tests(void)
     uart_puts("\n");
     */
 
-    uint32_t n = 1024*1024*4;
+    uint32_t n = 16;
+
+    for(int i = 0; i != n; ++i) {
+        if (i%2 == 0) {
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = i;
+        } else {
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = i;
+        }
+    }
+
+    for(int i = 0; i != n; ++i) {
+        uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
+        (void)a;
+    }
+
+    n = 1024*1024*4;
 
     for(int i = 0; i != n; ++i) {
         *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xDEADBEEF;
@@ -248,13 +263,12 @@ bool ram_tests(void)
     uart_print_u32(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + (1024*1024*4-1)));
     uart_puts("\n");
 
+    /*
     for(int i = 0; i != n; ++i) {
         uint32_t a = *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
         (void)a;
-        /*
         uart_print_u32(a);
         uart_puts("\n");
-        */
     }
 
     for(int i = 0; i != n; ++i) {
@@ -262,6 +276,7 @@ bool ram_tests(void)
         uart_print_u32(a);
         uart_puts("\n");
     }
+    */
 
     uart_puts("\n");
     uart_puts("\n");
@@ -351,7 +366,9 @@ int main(void)
                 command = 0;
 
                 failures += run_test("Debug controller & communications:     ", debug_controller_tests);
+                /*
                 failures += run_test("Target ULPI PHY:                       ", target_phy_tests);
+                */
                 failures += run_test("External RAM:                          ", ram_tests);
 
                 uart_puts("\n\n");

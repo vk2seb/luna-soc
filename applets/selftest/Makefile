@@ -44,7 +44,7 @@ $(TARGET).bin: $(TARGET).o
 # - gateware ------------------------------------------------------------------
 
 $(TARGET).bit: $(TARGET).bin $(SOC)
-	./$(SOC) --dry-run --output $@
+	./$(SOC) --dry-run --keep-files --output $@
 
 # - generated files -----------------------------------------------------------
 

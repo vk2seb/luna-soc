@@ -218,6 +218,8 @@ class SelftestCore(Elaboratable):
         # ... add bios and core peripherals ...
         self.soc.add_bios_and_peripherals(uart_pins=self.uart_pins)
 
+        self.soc.bootrom.init = get_mem_data("selftest.bin", data_width=32, endianness="little")
+
         """
         # ... read our firmware binary ...
         firmware = get_mem_data("selftest.bin", data_width=32, endianness="little")
@@ -382,6 +384,7 @@ if __name__ == "__main__":
 
     build_dir = os.path.join("build")
 
+    """
     # TODO fix litex build
     thirdparty = os.path.join(build_dir, "lambdasoc.soc.cpu/bios/3rdparty/litex")
     if not os.path.exists(thirdparty):
@@ -393,6 +396,7 @@ if __name__ == "__main__":
     design.soc.build(name="soc",
                      build_dir=build_dir,
                      do_init=True)
+                     """
 
 
     top_level_cli(design)
