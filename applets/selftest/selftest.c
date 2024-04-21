@@ -205,7 +205,11 @@ bool ram_tests(void)
     }
 
     for(int i = 0; i != n; ++i) {
-        *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = i;
+        if (i%2 == 0) {
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xAAAAAA00 + i;
+        } else {
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0x55555500 + i;
+        }
     }
 
     for(int i = 0; i != n; ++i) {

@@ -193,6 +193,7 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
 
         with m.FSM() as fsm:
             with m.State('IDLE'):
+                m.d.sync += self.bus.ack.eq(0)
                 with m.If(self.bus.cyc & self.bus.stb & psram.idle):
                     m.d.sync += [
                         psram.address.eq(self.bus.adr << 1),
@@ -208,6 +209,7 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
                 ]
                 m.next = 'WORD1-WAIT'
             with m.State('WORD1-WAIT'):
+                m.d.sync += self.bus.ack.eq(0)
                 with m.If(psram.read_ready):
                     m.d.sync += [
                         self.bus.dat_r[0:16].eq(psram.read_data),
@@ -227,13 +229,14 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
 
             with m.State('WORD2'):
                 with m.If(psram.read_ready | psram.write_ready):
-                    m.d.comb +=  self.bus.ack.eq(1)
+                    m.d.sync += self.bus.ack.eq(1)
                     m.d.sync += [
                         self.bus.dat_r[16:32].eq(psram.read_data),
                         psram.write_data.eq(self.bus.dat_w[0:16]),
                     ]
                     with m.If(self.bus.cti != wishbone.CycleType.INCR_BURST):
                         m.next = 'IDLE'
+                        m.d.sync += psram.final_word.eq(1)
                     with m.Else():
                         m.next = 'WORD1-WAIT'
 
