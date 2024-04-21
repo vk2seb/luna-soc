@@ -198,7 +198,7 @@ bool ram_tests(void)
     uart_puts("\n");
     */
 
-    uint32_t n = 16;
+    uint32_t n = 1024*1024;
 
     for(int i = 0; i != n; ++i) {
         *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xDEADBEEF;
@@ -206,9 +206,36 @@ bool ram_tests(void)
 
     for(int i = 0; i != n; ++i) {
         if (i%2 == 0) {
-            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xAAAAAA00 + i;
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0xAAAAAA00 + (i&0xFF);
         } else {
-            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0x55555500 + i;
+            *((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) = 0x55555500 + (i&0xFF);
+        }
+    }
+
+    for(int i = 0; i != n; ++i) {
+        bool ok = false;
+        if (i%2 == 0) {
+            ok = (*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) == 0xAAAAAA00 + (i&0xFF));
+        } else {
+            ok = (*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i) == 0x55555500 + (i&0xFF));
+        }
+        if(!ok) {
+            uart_puts("memtest FAIL @ ");
+            uart_print_u32((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
+            uart_puts(" - ");
+            uart_print_u32(*((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i));
+            uart_puts(" should be ");
+            if (i%2 == 0) {
+               uart_print_u32(0xAAAAAA00 + (i&0xFF));
+            } else {
+               uart_print_u32(0x55555500 + (i&0xFF));
+            }
+            uart_puts("\n");
+        }
+        if(i % 1024*1024 == 0) {
+            uart_puts("memtest @ ");
+            uart_print_u32((volatile uint32_t*)HYPERRAM_MEM_ADDRESS + i);
+            uart_puts("\n");
         }
     }
 
