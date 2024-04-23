@@ -16,6 +16,8 @@ from amaranth                                    import Elaboratable, Module, Ca
 from amaranth.build                              import *
 from amaranth.hdl.rec                            import Record
 
+from amaranth_soc            import wishbone
+
 import logging
 import os
 import sys
@@ -41,14 +43,27 @@ def gpdi_from_pmod(platform, pmod_index):
     platform.add_resources(gpdi)
     return platform.request(f"gpdi{pmod_index}")
 
+from amaranth.lib.fifo import AsyncFIFO
+
 class LxVideo(Elaboratable):
 
-    def __init__(self):
+    def __init__(self, fb_base=None, fifo_depth=64):
         super().__init__()
-        pass
+
+        self.bus = wishbone.Interface(addr_width=30, data_width=32, granularity=8,
+                                      features={"cti", "bte", "err"})
+
+        self.fifo = AsyncFIFO(width=32, depth=fifo_depth, r_domain='hdmi', w_domain='sync')
+
+        self.fifo_depth = fifo_depth
+        self.fb_base = fb_base
+        self.fb_hsize = 720
+        self.fb_vsize = 720
 
     def elaborate(self, platform) -> Module:
         m = Module()
+
+        m.submodules.fifo = self.fifo
 
         gpdi = gpdi_from_pmod(platform, 0)
 
@@ -57,12 +72,9 @@ class LxVideo(Elaboratable):
         vtg_hcount = Signal(12)
         vtg_vcount = Signal(12)
 
-        counter = Signal(8)
-
-        with m.If((vtg_hcount == 0) & (vtg_vcount == 0)):
-            m.d.hdmi += [
-                counter.eq(counter + 1)
-            ]
+        phy_r = Signal(8)
+        phy_g = Signal(8)
+        phy_b = Signal(8)
 
         m.submodules.vlxvid = Instance("lxvid",
             i_clk_sys = ClockSignal("sync"),
@@ -85,10 +97,102 @@ class LxVideo(Elaboratable):
             o_vtg_hcount = vtg_hcount,
             o_vtg_vcount = vtg_vcount,
 
-            i_phy_r = vtg_hcount[0:7] + counter,
-            i_phy_g = vtg_vcount[0:7] + counter,
-            i_phy_b = 0,
+            i_phy_r = phy_r,
+            i_phy_g = phy_g,
+            i_phy_b = phy_b,
         )
+
+        # how?
+
+        # 2 separate state machines, one in each sys / hdmi clk domain?
+
+        # START
+        # - load fifos
+        # - wait for vtg 0, 0 (or 1 clock before)
+        # THEN
+        # - drain fifo on every clock
+        # - burst read hyperram on every level = depth/2
+        # - make sure correct burst size wraps correctly
+
+        bus = self.bus
+
+        dma_addr = Signal(32)
+
+        fb_len_words = (self.fb_hsize*self.fb_vsize) // 4
+
+        """
+        # bus -> FIFO
+        # todo bursts
+        m.d.comb += [
+            bus.stb.eq(self.fifo.w_rdy),
+            bus.cyc.eq(self.fifo.w_rdy),
+            bus.we.eq(0),
+            bus.sel.eq(2**(bus.data_width//8)-1),
+            bus.adr.eq(self.fb_base + dma_addr),
+            self.fifo.w_data.eq(bus.dat_r),
+        ]
+        with m.If(bus.stb & bus.ack):
+            m.d.comb += self.fifo.w_en.eq(1)
+        """
+
+        # bus -> FIFO
+        # burst until FIFO is full, then wait until half empty.
+
+        # sync domain
+        with m.FSM() as fsm:
+            with m.State('BURST'):
+                with m.If(self.fifo.w_rdy):
+                    m.d.comb += [
+                        bus.stb.eq(1),
+                        bus.cyc.eq(1),
+                        bus.we.eq(0),
+                        bus.sel.eq(2**(bus.data_width//8)-1),
+                        bus.adr.eq(self.fb_base + dma_addr),
+                        self.fifo.w_data.eq(bus.dat_r),
+                    ]
+                    with m.If(self.fifo.w_level == self.fifo_depth-1):
+                        m.d.comb += bus.cti.eq(
+                                wishbone.CycleType.END_OF_BURST)
+                    with m.Else():
+                        m.d.comb += bus.cti.eq(
+                                wishbone.CycleType.INCR_BURST)
+                    with m.If(bus.stb & bus.ack):
+                        m.d.comb += self.fifo.w_en.eq(1)
+                        with m.If(dma_addr < (fb_len_words-1) << 2):
+                            m.d.sync += dma_addr.eq(dma_addr + 4)
+                        with m.Else():
+                            m.d.sync += dma_addr.eq(0)
+                with m.Else():
+                    # FIFO full, hold off for next burst.
+                    m.next = 'WAIT'
+            with m.State('WAIT'):
+                with m.If(self.fifo.w_level < self.fifo_depth//2):
+                    m.next = 'BURST'
+
+        # FIFO -> PHY (1 word -> 4 pixels)
+
+        bytecounter = Signal(2)
+        last_word   = Signal(32)
+        consume_started = Signal(1, reset=0)
+
+        with m.If((vtg_hcount == 0) & (vtg_vcount == 0) &
+                  self.fifo.r_level > self.fifo_depth//2):
+            m.d.hdmi += consume_started.eq(1)
+
+        with m.If(consume_started):
+            m.d.hdmi += bytecounter.eq(bytecounter+1)
+
+        with m.If(bytecounter == 0):
+            m.d.hdmi += last_word.eq(self.fifo.r_data)
+        with m.Else():
+            m.d.hdmi += last_word.eq(last_word >> 8)
+
+        m.d.comb += [
+            self.fifo.r_en.eq(bytecounter == 3),
+            phy_r.eq(last_word[0:7]),
+            phy_g.eq(last_word[0:7]),
+            phy_b.eq(last_word[0:7]),
+        ]
 
         return m
 
@@ -118,8 +222,13 @@ class HelloSoc(Elaboratable):
         self.soc.add_peripheral(self.leds, addr=0xf0001000)
 
         # ... add memory-mapped hyperram peripheral (128Mbit)
+        hyperram_base = 0x20000000
         self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
-        self.soc.add_peripheral(self.soc.hyperram, addr=0x20000000)
+        self.soc.add_peripheral(self.soc.hyperram, addr=hyperram_base)
+
+        # ... add memory-mapped framebuffer output that drives hyperram
+        self.video = LxVideo(fb_base=hyperram_base)
+        self.soc._bus_arbiter.add(self.video.bus)
 
     def elaborate(self, platform):
         m = Module()
@@ -138,7 +247,7 @@ class HelloSoc(Elaboratable):
             m.d.comb += uart_io.tx.oe.eq(~self.soc.uart._phy.tx.rdy),
 
         # video
-        m.submodules.video = LxVideo()
+        m.submodules.video = self.video
 
         return m
 
