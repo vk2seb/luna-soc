@@ -8,8 +8,8 @@
 //
 // Filename   : lxvid.v
 // Device     : LFE5U-45F-7BG256I
-// LiteX sha1 : 31aa923
-// Date       : 2024-04-23 09:11:34
+// LiteX sha1 : 20ce53b
+// Date       : 2024-04-23 15:14:12
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -22,12 +22,6 @@ module lxvid (
     input  wire          clk_hdmi,
     input  wire          clk_hdmi5x,
     input  wire          clk_sys,
-    input  wire   [31:0] dma_stream_data,
-    input  wire          dma_stream_first,
-    input  wire          dma_stream_last,
-    output wire          dma_stream_ready,
-    input  wire          dma_stream_reset,
-    input  wire          dma_stream_valid,
     output wire          gpdi_clk_n,
     output wire          gpdi_clk_p,
     output wire          gpdi_data0_n,
@@ -36,9 +30,17 @@ module lxvid (
     output wire          gpdi_data1_p,
     output wire          gpdi_data2_n,
     output wire          gpdi_data2_p,
+    input  wire    [7:0] phy_b,
+    output wire          phy_de,
+    input  wire    [7:0] phy_g,
+    output wire          phy_hsync,
+    input  wire    [7:0] phy_r,
+    output wire          phy_vsync,
     input  wire          rst_hdmi,
     input  wire          rst_hdmi5x,
-    input  wire          rst_sys
+    input  wire          rst_sys,
+    output wire   [11:0] vtg_hcount,
+    output wire   [11:0] vtg_vcount
 );
 
 
@@ -101,17 +103,8 @@ LxVideoCore
 │    │    │    │    │    └─── graycounter_0* (GrayCounter)
 │    │    │    │    │    └─── graycounter_1* (GrayCounter)
 │    │    └─── gearbox (Gearbox)
-└─── video_framebuffer_vtg (VideoTimingGenerator)
+└─── lxvid_vtg (VideoTimingGenerator)
 │    └─── fsm (FSM)
-└─── video_framebuffer (VideoFrameBuffer)
-│    └─── conv (Converter)
-│    │    └─── _identityconverter_0* (_IdentityConverter)
-│    └─── cdc (ClockDomainCrossing)
-│    │    └─── asyncfifo_0* (AsyncFIFO)
-│    │    │    └─── fifo (AsyncFIFO)
-│    │    │    │    └─── graycounter_0* (GrayCounter)
-│    │    │    │    └─── graycounter_1* (GrayCounter)
-│    └─── fsm_0* (FSM)
 └─── csr_bridge (Wishbone2CSR)
 │    └─── fsm (FSM)
 └─── csr_bankarray (CSRBankArray)
@@ -151,30 +144,48 @@ reg           clockdomainsrenamer_next_state = 1'd0;
 reg           clockdomainsrenamer_state = 1'd0;
 wire   [31:0] dat_r;
 wire   [31:0] dat_w;
+wire          enable;
 wire          enable0_r;
 reg           enable0_re = 1'd0;
 wire          enable0_w;
 reg           enable0_we = 1'd0;
+reg           enable_re = 1'd0;
+reg           enable_storage = 1'd1;
+reg           hactive = 1'd0;
+reg           hactive_next_value0 = 1'd0;
+reg           hactive_next_value_ce0 = 1'd0;
 wire          hdmi5x_clk;
 wire          hdmi5x_rst;
 wire          hdmi_clk;
 wire          hdmi_rst;
+wire   [11:0] hres;
 wire   [11:0] hres0_r;
 reg           hres0_re = 1'd0;
 wire   [11:0] hres0_w;
 reg           hres0_we = 1'd0;
+reg           hres_re = 1'd0;
+reg    [11:0] hres_storage = 12'd720;
+wire   [11:0] hscan;
 wire   [11:0] hscan0_r;
 reg           hscan0_re = 1'd0;
 wire   [11:0] hscan0_w;
 reg           hscan0_we = 1'd0;
+reg           hscan_re = 1'd0;
+reg    [11:0] hscan_storage = 12'd819;
+wire   [11:0] hsync_end;
 wire   [11:0] hsync_end0_r;
 reg           hsync_end0_re = 1'd0;
 wire   [11:0] hsync_end0_w;
 reg           hsync_end0_we = 1'd0;
+reg           hsync_end_re = 1'd0;
+reg    [11:0] hsync_end_storage = 12'd780;
+wire   [11:0] hsync_start;
 wire   [11:0] hsync_start0_r;
 reg           hsync_start0_re = 1'd0;
 wire   [11:0] hsync_start0_w;
 reg           hsync_start0_we = 1'd0;
+reg           hsync_start_re = 1'd0;
+reg    [11:0] hsync_start_storage = 12'd760;
 reg           interface0_ack = 1'd0;
 reg    [29:0] interface0_adr = 30'd0;
 reg           interface0_cyc = 1'd0;
@@ -213,12 +224,6 @@ reg     [2:0] multiregimpl1_regs0 = 3'd0;
 reg     [2:0] multiregimpl1_regs1 = 3'd0;
 reg    [11:0] multiregimpl20_regs0 = 12'd0;
 reg    [11:0] multiregimpl20_regs1 = 12'd0;
-reg     [2:0] multiregimpl21_regs0 = 3'd0;
-reg     [2:0] multiregimpl21_regs1 = 3'd0;
-reg     [2:0] multiregimpl22_regs0 = 3'd0;
-reg     [2:0] multiregimpl22_regs1 = 3'd0;
-reg           multiregimpl23_regs0 = 1'd0;
-reg           multiregimpl23_regs1 = 1'd0;
 reg     [2:0] multiregimpl2_regs0 = 3'd0;
 reg     [2:0] multiregimpl2_regs1 = 3'd0;
 reg     [2:0] multiregimpl3_regs0 = 3'd0;
@@ -235,6 +240,7 @@ reg     [2:0] multiregimpl8_regs0 = 3'd0;
 reg     [2:0] multiregimpl8_regs1 = 3'd0;
 reg     [2:0] multiregimpl9_regs0 = 3'd0;
 reg     [2:0] multiregimpl9_regs1 = 3'd0;
+wire          reset;
 wire          sel;
 reg     [9:0] self0 = 10'd0;
 reg     [9:0] self1 = 10'd0;
@@ -242,7 +248,6 @@ reg     [9:0] self2 = 10'd0;
 reg     [9:0] self3 = 10'd0;
 reg     [9:0] self4 = 10'd0;
 reg     [9:0] self5 = 10'd0;
-wire          sink_first;
 wire          sink_last;
 wire    [7:0] sink_payload_b;
 wire          sink_payload_de;
@@ -252,6 +257,29 @@ wire    [7:0] sink_payload_r;
 wire          sink_payload_vsync;
 wire          sink_ready;
 wire          sink_valid;
+reg           source_first = 1'd0;
+reg           source_last = 1'd0;
+wire          source_payload_de;
+reg    [11:0] source_payload_hcount = 12'd0;
+reg    [11:0] source_payload_hcount_next_value4 = 12'd0;
+reg           source_payload_hcount_next_value_ce4 = 1'd0;
+reg    [11:0] source_payload_hres = 12'd0;
+reg    [11:0] source_payload_hres_next_value2 = 12'd0;
+reg           source_payload_hres_next_value_ce2 = 1'd0;
+reg           source_payload_hsync = 1'd0;
+reg           source_payload_hsync_next_value6 = 1'd0;
+reg           source_payload_hsync_next_value_ce6 = 1'd0;
+reg    [11:0] source_payload_vcount = 12'd0;
+reg    [11:0] source_payload_vcount_next_value5 = 12'd0;
+reg           source_payload_vcount_next_value_ce5 = 1'd0;
+reg    [11:0] source_payload_vres = 12'd0;
+reg    [11:0] source_payload_vres_next_value3 = 12'd0;
+reg           source_payload_vres_next_value_ce3 = 1'd0;
+reg           source_payload_vsync = 1'd0;
+reg           source_payload_vsync_next_value7 = 1'd0;
+reg           source_payload_vsync_next_value_ce7 = 1'd0;
+wire          source_ready;
+reg           source_valid = 1'd0;
 wire          sys_clk;
 wire          sys_rst;
 wire    [1:0] tmdsencoder0_c;
@@ -362,106 +390,9 @@ reg     [9:0] tmdsencoder5_out = 10'd0;
 wire          tmdsencoder5_q_m8_n;
 reg     [8:0] tmdsencoder5_q_m_r = 9'd0;
 reg     [8:0] tmdsencoder5_self = 9'd0;
-wire   [33:0] vfb_cdc_cdc_asyncfifo_din;
-wire   [33:0] vfb_cdc_cdc_asyncfifo_dout;
-wire          vfb_cdc_cdc_asyncfifo_re;
-wire          vfb_cdc_cdc_asyncfifo_readable;
-wire          vfb_cdc_cdc_asyncfifo_we;
-wire          vfb_cdc_cdc_asyncfifo_writable;
-wire    [2:0] vfb_cdc_cdc_consume_wdomain;
-wire          vfb_cdc_cdc_fifo_in_first;
-wire          vfb_cdc_cdc_fifo_in_last;
-wire   [31:0] vfb_cdc_cdc_fifo_in_payload_data;
-wire          vfb_cdc_cdc_fifo_out_first;
-wire          vfb_cdc_cdc_fifo_out_last;
-wire   [31:0] vfb_cdc_cdc_fifo_out_payload_data;
-wire          vfb_cdc_cdc_graycounter0_ce;
-reg     [2:0] vfb_cdc_cdc_graycounter0_q = 3'd0;
-reg     [2:0] vfb_cdc_cdc_graycounter0_q_binary = 3'd0;
-wire    [2:0] vfb_cdc_cdc_graycounter0_q_next;
-reg     [2:0] vfb_cdc_cdc_graycounter0_q_next_binary = 3'd0;
-wire          vfb_cdc_cdc_graycounter1_ce;
-reg     [2:0] vfb_cdc_cdc_graycounter1_q = 3'd0;
-reg     [2:0] vfb_cdc_cdc_graycounter1_q_binary = 3'd0;
-wire    [2:0] vfb_cdc_cdc_graycounter1_q_next;
-reg     [2:0] vfb_cdc_cdc_graycounter1_q_next_binary = 3'd0;
-wire    [2:0] vfb_cdc_cdc_produce_rdomain;
-wire    [1:0] vfb_cdc_cdc_rdport_adr;
-wire   [33:0] vfb_cdc_cdc_rdport_dat_r;
-wire          vfb_cdc_cdc_sink_first;
-wire          vfb_cdc_cdc_sink_last;
-wire   [31:0] vfb_cdc_cdc_sink_payload_data;
-wire          vfb_cdc_cdc_sink_ready;
-wire          vfb_cdc_cdc_sink_valid;
-wire          vfb_cdc_cdc_source_first;
-wire          vfb_cdc_cdc_source_last;
-wire   [31:0] vfb_cdc_cdc_source_payload_data;
-wire          vfb_cdc_cdc_source_ready;
-wire          vfb_cdc_cdc_source_valid;
-wire    [1:0] vfb_cdc_cdc_wrport_adr;
-wire   [33:0] vfb_cdc_cdc_wrport_dat_r;
-wire   [33:0] vfb_cdc_cdc_wrport_dat_w;
-wire          vfb_cdc_cdc_wrport_we;
-wire          vfb_cdc_sink_sink_first;
-wire          vfb_cdc_sink_sink_last;
-wire   [31:0] vfb_cdc_sink_sink_payload_data;
-wire          vfb_cdc_sink_sink_ready;
-wire          vfb_cdc_sink_sink_valid;
-wire          vfb_cdc_source_source_first;
-wire          vfb_cdc_source_source_last;
-wire   [31:0] vfb_cdc_source_source_payload_data;
-reg           vfb_cdc_source_source_ready = 1'd0;
-wire          vfb_cdc_source_source_valid;
-wire          vfb_conv_converter_sink_first;
-wire          vfb_conv_converter_sink_last;
-wire   [31:0] vfb_conv_converter_sink_payload_data;
-wire          vfb_conv_converter_sink_ready;
-wire          vfb_conv_converter_sink_valid;
-wire          vfb_conv_converter_source_first;
-wire          vfb_conv_converter_source_last;
-wire   [31:0] vfb_conv_converter_source_payload_data;
-wire          vfb_conv_converter_source_payload_valid_token_count;
-wire          vfb_conv_converter_source_ready;
-wire          vfb_conv_converter_source_valid;
-wire          vfb_conv_source_source_first;
-wire          vfb_conv_source_source_last;
-wire   [31:0] vfb_conv_source_source_payload_data;
-wire          vfb_conv_source_source_ready;
-wire          vfb_conv_source_source_valid;
-wire          vfb_dma_reset;
-wire          vfb_dma_source_first;
-wire          vfb_dma_source_last;
-wire   [31:0] vfb_dma_source_payload_data;
-wire          vfb_dma_source_ready;
-wire          vfb_dma_source_valid;
-reg           vfb_first = 1'd0;
-reg           vfb_first_videoframebuffer_next_value = 1'd0;
-reg           vfb_first_videoframebuffer_next_value_ce = 1'd0;
-wire          vfb_reset;
-reg           vfb_source_first = 1'd0;
-reg           vfb_source_last = 1'd0;
-wire    [7:0] vfb_source_payload_b;
-reg           vfb_source_payload_de = 1'd0;
-wire    [7:0] vfb_source_payload_g;
-reg           vfb_source_payload_hsync = 1'd0;
-wire    [7:0] vfb_source_payload_r;
-reg           vfb_source_payload_vsync = 1'd0;
-wire          vfb_source_ready;
-reg           vfb_source_valid = 1'd0;
-wire          vfb_underflow;
-wire          vfb_vtg_sink_first;
-wire          vfb_vtg_sink_last;
-wire          vfb_vtg_sink_payload_de;
-wire   [11:0] vfb_vtg_sink_payload_hcount;
-wire   [11:0] vfb_vtg_sink_payload_hres;
-wire          vfb_vtg_sink_payload_hsync;
-wire   [11:0] vfb_vtg_sink_payload_vcount;
-wire   [11:0] vfb_vtg_sink_payload_vres;
-wire          vfb_vtg_sink_payload_vsync;
-reg           vfb_vtg_sink_ready = 1'd0;
-wire          vfb_vtg_sink_valid;
-reg           videoframebuffer_next_state = 1'd0;
-reg           videoframebuffer_state = 1'd0;
+reg           vactive = 1'd0;
+reg           vactive_next_value1 = 1'd0;
+reg           vactive_next_value_ce1 = 1'd0;
 wire   [11:0] videohdmi10to1serializer0_cdc_asyncfifo0_din;
 wire   [11:0] videohdmi10to1serializer0_cdc_asyncfifo0_dout;
 wire          videohdmi10to1serializer0_cdc_asyncfifo0_re;
@@ -858,79 +789,34 @@ wire    [9:0] videohdmi10to1serializer5_source_source_payload_data;
 wire          videohdmi10to1serializer5_source_source_ready;
 wire          videohdmi10to1serializer5_source_source_valid;
 wire          videohdmi10to1serializer5_source_valid;
+wire   [11:0] vres;
 wire   [11:0] vres0_r;
 reg           vres0_re = 1'd0;
 wire   [11:0] vres0_w;
 reg           vres0_we = 1'd0;
+reg           vres_re = 1'd0;
+reg    [11:0] vres_storage = 12'd720;
+wire   [11:0] vscan;
 wire   [11:0] vscan0_r;
 reg           vscan0_re = 1'd0;
 wire   [11:0] vscan0_w;
 reg           vscan0_we = 1'd0;
+reg           vscan_re = 1'd0;
+reg    [11:0] vscan_storage = 12'd759;
+wire   [11:0] vsync_end;
 wire   [11:0] vsync_end0_r;
 reg           vsync_end0_re = 1'd0;
 wire   [11:0] vsync_end0_w;
 reg           vsync_end0_we = 1'd0;
+reg           vsync_end_re = 1'd0;
+reg    [11:0] vsync_end_storage = 12'd748;
+wire   [11:0] vsync_start;
 wire   [11:0] vsync_start0_r;
 reg           vsync_start0_re = 1'd0;
 wire   [11:0] vsync_start0_w;
 reg           vsync_start0_we = 1'd0;
-wire          vtg_enable;
-reg           vtg_enable_re = 1'd0;
-reg           vtg_enable_storage = 1'd1;
-reg           vtg_hactive = 1'd0;
-reg           vtg_hactive_clockdomainsrenamer_next_value0 = 1'd0;
-reg           vtg_hactive_clockdomainsrenamer_next_value_ce0 = 1'd0;
-wire   [11:0] vtg_hres;
-reg           vtg_hres_re = 1'd0;
-reg    [11:0] vtg_hres_storage = 12'd720;
-wire   [11:0] vtg_hscan;
-reg           vtg_hscan_re = 1'd0;
-reg    [11:0] vtg_hscan_storage = 12'd819;
-wire   [11:0] vtg_hsync_end;
-reg           vtg_hsync_end_re = 1'd0;
-reg    [11:0] vtg_hsync_end_storage = 12'd780;
-wire   [11:0] vtg_hsync_start;
-reg           vtg_hsync_start_re = 1'd0;
-reg    [11:0] vtg_hsync_start_storage = 12'd760;
-wire          vtg_reset;
-reg           vtg_source_first = 1'd0;
-reg           vtg_source_last = 1'd0;
-wire          vtg_source_payload_de;
-reg    [11:0] vtg_source_payload_hcount = 12'd0;
-reg    [11:0] vtg_source_payload_hcount_clockdomainsrenamer_next_value4 = 12'd0;
-reg           vtg_source_payload_hcount_clockdomainsrenamer_next_value_ce4 = 1'd0;
-reg    [11:0] vtg_source_payload_hres = 12'd0;
-reg    [11:0] vtg_source_payload_hres_clockdomainsrenamer_next_value2 = 12'd0;
-reg           vtg_source_payload_hres_clockdomainsrenamer_next_value_ce2 = 1'd0;
-reg           vtg_source_payload_hsync = 1'd0;
-reg           vtg_source_payload_hsync_clockdomainsrenamer_next_value6 = 1'd0;
-reg           vtg_source_payload_hsync_clockdomainsrenamer_next_value_ce6 = 1'd0;
-reg    [11:0] vtg_source_payload_vcount = 12'd0;
-reg    [11:0] vtg_source_payload_vcount_clockdomainsrenamer_next_value5 = 12'd0;
-reg           vtg_source_payload_vcount_clockdomainsrenamer_next_value_ce5 = 1'd0;
-reg    [11:0] vtg_source_payload_vres = 12'd0;
-reg    [11:0] vtg_source_payload_vres_clockdomainsrenamer_next_value3 = 12'd0;
-reg           vtg_source_payload_vres_clockdomainsrenamer_next_value_ce3 = 1'd0;
-reg           vtg_source_payload_vsync = 1'd0;
-reg           vtg_source_payload_vsync_clockdomainsrenamer_next_value7 = 1'd0;
-reg           vtg_source_payload_vsync_clockdomainsrenamer_next_value_ce7 = 1'd0;
-wire          vtg_source_ready;
-reg           vtg_source_valid = 1'd0;
-reg           vtg_vactive = 1'd0;
-reg           vtg_vactive_clockdomainsrenamer_next_value1 = 1'd0;
-reg           vtg_vactive_clockdomainsrenamer_next_value_ce1 = 1'd0;
-wire   [11:0] vtg_vres;
-reg           vtg_vres_re = 1'd0;
-reg    [11:0] vtg_vres_storage = 12'd720;
-wire   [11:0] vtg_vscan;
-reg           vtg_vscan_re = 1'd0;
-reg    [11:0] vtg_vscan_storage = 12'd759;
-wire   [11:0] vtg_vsync_end;
-reg           vtg_vsync_end_re = 1'd0;
-reg    [11:0] vtg_vsync_end_storage = 12'd748;
-wire   [11:0] vtg_vsync_start;
-reg           vtg_vsync_start_re = 1'd0;
-reg    [11:0] vtg_vsync_start_storage = 12'd744;
+reg           vsync_start_re = 1'd0;
+reg    [11:0] vsync_start_storage = 12'd744;
 wire          we;
 reg           wishbone2csr_next_state = 1'd0;
 reg           wishbone2csr_state = 1'd0;
@@ -945,33 +831,20 @@ assign hdmi5x_clk = clk_hdmi5x;
 assign sys_rst = rst_sys;
 assign hdmi_rst = rst_hdmi;
 assign hdmi5x_rst = rst_hdmi5x;
-assign vfb_vtg_sink_valid = vtg_source_valid;
-assign vtg_source_ready = vfb_vtg_sink_ready;
-assign vfb_vtg_sink_first = vtg_source_first;
-assign vfb_vtg_sink_last = vtg_source_last;
-assign vfb_vtg_sink_payload_hsync = vtg_source_payload_hsync;
-assign vfb_vtg_sink_payload_vsync = vtg_source_payload_vsync;
-assign vfb_vtg_sink_payload_de = vtg_source_payload_de;
-assign vfb_vtg_sink_payload_hres = vtg_source_payload_hres;
-assign vfb_vtg_sink_payload_vres = vtg_source_payload_vres;
-assign vfb_vtg_sink_payload_hcount = vtg_source_payload_hcount;
-assign vfb_vtg_sink_payload_vcount = vtg_source_payload_vcount;
-assign sink_valid = vfb_source_valid;
-assign vfb_source_ready = sink_ready;
-assign sink_first = vfb_source_first;
-assign sink_last = vfb_source_last;
-assign sink_payload_hsync = vfb_source_payload_hsync;
-assign sink_payload_vsync = vfb_source_payload_vsync;
-assign sink_payload_de = vfb_source_payload_de;
-assign sink_payload_r = vfb_source_payload_r;
-assign sink_payload_g = vfb_source_payload_g;
-assign sink_payload_b = vfb_source_payload_b;
-assign vfb_dma_reset = dma_stream_reset;
-assign vfb_dma_source_valid = dma_stream_valid;
-assign vfb_dma_source_payload_data = dma_stream_data;
-assign vfb_dma_source_first = dma_stream_first;
-assign vfb_dma_source_last = dma_stream_last;
-assign dma_stream_ready = vfb_dma_source_ready;
+assign vtg_hcount = source_payload_hcount;
+assign vtg_vcount = source_payload_vcount;
+assign phy_hsync = sink_payload_hsync;
+assign phy_vsync = sink_payload_vsync;
+assign phy_de = sink_payload_de;
+assign sink_payload_r = phy_r;
+assign sink_payload_g = phy_g;
+assign sink_payload_b = phy_b;
+assign sink_valid = source_valid;
+assign sink_last = source_last;
+assign source_ready = sink_ready;
+assign sink_payload_de = source_payload_de;
+assign sink_payload_hsync = source_payload_hsync;
+assign sink_payload_vsync = source_payload_vsync;
 assign sink_ready = 1'd1;
 assign tmdsencoder0_d0 = sink_payload_b;
 assign tmdsencoder0_c = {sink_payload_vsync, sink_payload_hsync};
@@ -1597,8 +1470,8 @@ always @(*) begin
     endcase
 end
 assign videohdmi10to1serializer5_source_payload_data = {videohdmi10to1serializer5_o_data[0], videohdmi10to1serializer5_o_data[1]};
-assign vtg_reset = (~vtg_enable);
-assign vtg_source_payload_de = (vtg_hactive & vtg_vactive);
+assign reset = (~enable);
+assign source_payload_de = (hactive & vactive);
 always @(*) begin
     clockdomainsrenamer_next_state <= 1'd0;
     clockdomainsrenamer_next_state <= clockdomainsrenamer_state;
@@ -1611,223 +1484,112 @@ always @(*) begin
     endcase
 end
 always @(*) begin
-    vtg_source_payload_hsync_clockdomainsrenamer_next_value6 <= 1'd0;
+    source_payload_hcount_next_value4 <= 12'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    vtg_source_payload_hsync_clockdomainsrenamer_next_value6 <= 1'd1;
-                end
-                if ((vtg_source_payload_hcount == vtg_hsync_end)) begin
-                    vtg_source_payload_hsync_clockdomainsrenamer_next_value6 <= 1'd0;
+            if (source_ready) begin
+                source_payload_hcount_next_value4 <= (source_payload_hcount + 1'd1);
+                if ((source_payload_hcount == hscan)) begin
+                    source_payload_hcount_next_value4 <= 1'd0;
                 end
             end
         end
         default: begin
+            source_payload_hcount_next_value4 <= 1'd0;
         end
     endcase
 end
 always @(*) begin
-    vtg_source_payload_hres_clockdomainsrenamer_next_value2 <= 12'd0;
+    source_payload_hcount_next_value_ce4 <= 1'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-        end
-        default: begin
-            vtg_source_payload_hres_clockdomainsrenamer_next_value2 <= vtg_hres;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_source_payload_hsync_clockdomainsrenamer_next_value_ce6 <= 1'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    vtg_source_payload_hsync_clockdomainsrenamer_next_value_ce6 <= 1'd1;
-                end
-                if ((vtg_source_payload_hcount == vtg_hsync_end)) begin
-                    vtg_source_payload_hsync_clockdomainsrenamer_next_value_ce6 <= 1'd1;
+            if (source_ready) begin
+                source_payload_hcount_next_value_ce4 <= 1'd1;
+                if ((source_payload_hcount == hscan)) begin
+                    source_payload_hcount_next_value_ce4 <= 1'd1;
                 end
             end
         end
         default: begin
+            source_payload_hcount_next_value_ce4 <= 1'd1;
         end
     endcase
 end
 always @(*) begin
-    vtg_source_payload_hres_clockdomainsrenamer_next_value_ce2 <= 1'd0;
+    source_payload_vcount_next_value5 <= 12'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-        end
-        default: begin
-            vtg_source_payload_hres_clockdomainsrenamer_next_value_ce2 <= 1'd1;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_source_payload_vsync_clockdomainsrenamer_next_value_ce7 <= 1'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    if ((vtg_source_payload_vcount == vtg_vsync_start)) begin
-                        vtg_source_payload_vsync_clockdomainsrenamer_next_value_ce7 <= 1'd1;
-                    end
-                    if ((vtg_source_payload_vcount == vtg_vsync_end)) begin
-                        vtg_source_payload_vsync_clockdomainsrenamer_next_value_ce7 <= 1'd1;
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    source_payload_vcount_next_value5 <= (source_payload_vcount + 1'd1);
+                    if ((source_payload_vcount == vscan)) begin
+                        source_payload_vcount_next_value5 <= 1'd0;
                     end
                 end
             end
         end
         default: begin
+            source_payload_vcount_next_value5 <= 1'd0;
         end
     endcase
 end
 always @(*) begin
-    vtg_source_payload_vres_clockdomainsrenamer_next_value3 <= 12'd0;
+    source_valid <= 1'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
+            source_valid <= 1'd1;
         end
         default: begin
-            vtg_source_payload_vres_clockdomainsrenamer_next_value3 <= vtg_vres;
         end
     endcase
 end
 always @(*) begin
-    vtg_source_payload_vres_clockdomainsrenamer_next_value_ce3 <= 1'd0;
+    source_payload_vcount_next_value_ce5 <= 1'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-        end
-        default: begin
-            vtg_source_payload_vres_clockdomainsrenamer_next_value_ce3 <= 1'd1;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_source_payload_hcount_clockdomainsrenamer_next_value4 <= 12'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                vtg_source_payload_hcount_clockdomainsrenamer_next_value4 <= (vtg_source_payload_hcount + 1'd1);
-                if ((vtg_source_payload_hcount == vtg_hscan)) begin
-                    vtg_source_payload_hcount_clockdomainsrenamer_next_value4 <= 1'd0;
-                end
-            end
-        end
-        default: begin
-            vtg_source_payload_hcount_clockdomainsrenamer_next_value4 <= 1'd0;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_source_payload_hcount_clockdomainsrenamer_next_value_ce4 <= 1'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                vtg_source_payload_hcount_clockdomainsrenamer_next_value_ce4 <= 1'd1;
-                if ((vtg_source_payload_hcount == vtg_hscan)) begin
-                    vtg_source_payload_hcount_clockdomainsrenamer_next_value_ce4 <= 1'd1;
-                end
-            end
-        end
-        default: begin
-            vtg_source_payload_hcount_clockdomainsrenamer_next_value_ce4 <= 1'd1;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_source_payload_vcount_clockdomainsrenamer_next_value5 <= 12'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    vtg_source_payload_vcount_clockdomainsrenamer_next_value5 <= (vtg_source_payload_vcount + 1'd1);
-                    if ((vtg_source_payload_vcount == vtg_vscan)) begin
-                        vtg_source_payload_vcount_clockdomainsrenamer_next_value5 <= 1'd0;
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    source_payload_vcount_next_value_ce5 <= 1'd1;
+                    if ((source_payload_vcount == vscan)) begin
+                        source_payload_vcount_next_value_ce5 <= 1'd1;
                     end
                 end
             end
         end
         default: begin
-            vtg_source_payload_vcount_clockdomainsrenamer_next_value5 <= 1'd0;
+            source_payload_vcount_next_value_ce5 <= 1'd1;
         end
     endcase
 end
 always @(*) begin
-    vtg_source_valid <= 1'd0;
+    hactive_next_value0 <= 1'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-            vtg_source_valid <= 1'd1;
+            if (source_ready) begin
+                if ((source_payload_hcount == 1'd0)) begin
+                    hactive_next_value0 <= 1'd1;
+                end
+                if ((source_payload_hcount == hres)) begin
+                    hactive_next_value0 <= 1'd0;
+                end
+            end
         end
         default: begin
+            hactive_next_value0 <= 1'd0;
         end
     endcase
 end
 always @(*) begin
-    vtg_source_payload_vcount_clockdomainsrenamer_next_value_ce5 <= 1'd0;
+    source_payload_vsync_next_value7 <= 1'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    vtg_source_payload_vcount_clockdomainsrenamer_next_value_ce5 <= 1'd1;
-                    if ((vtg_source_payload_vcount == vtg_vscan)) begin
-                        vtg_source_payload_vcount_clockdomainsrenamer_next_value_ce5 <= 1'd1;
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    if ((source_payload_vcount == vsync_start)) begin
+                        source_payload_vsync_next_value7 <= 1'd1;
                     end
-                end
-            end
-        end
-        default: begin
-            vtg_source_payload_vcount_clockdomainsrenamer_next_value_ce5 <= 1'd1;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_hactive_clockdomainsrenamer_next_value0 <= 1'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == 1'd0)) begin
-                    vtg_hactive_clockdomainsrenamer_next_value0 <= 1'd1;
-                end
-                if ((vtg_source_payload_hcount == vtg_hres)) begin
-                    vtg_hactive_clockdomainsrenamer_next_value0 <= 1'd0;
-                end
-            end
-        end
-        default: begin
-            vtg_hactive_clockdomainsrenamer_next_value0 <= 1'd0;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_hactive_clockdomainsrenamer_next_value_ce0 <= 1'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == 1'd0)) begin
-                    vtg_hactive_clockdomainsrenamer_next_value_ce0 <= 1'd1;
-                end
-                if ((vtg_source_payload_hcount == vtg_hres)) begin
-                    vtg_hactive_clockdomainsrenamer_next_value_ce0 <= 1'd1;
-                end
-            end
-        end
-        default: begin
-            vtg_hactive_clockdomainsrenamer_next_value_ce0 <= 1'd1;
-        end
-    endcase
-end
-always @(*) begin
-    vtg_source_payload_vsync_clockdomainsrenamer_next_value7 <= 1'd0;
-    case (clockdomainsrenamer_state)
-        1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    if ((vtg_source_payload_vcount == vtg_vsync_start)) begin
-                        vtg_source_payload_vsync_clockdomainsrenamer_next_value7 <= 1'd1;
-                    end
-                    if ((vtg_source_payload_vcount == vtg_vsync_end)) begin
-                        vtg_source_payload_vsync_clockdomainsrenamer_next_value7 <= 1'd0;
+                    if ((source_payload_vcount == vsync_end)) begin
+                        source_payload_vsync_next_value7 <= 1'd0;
                     end
                 end
             end
@@ -1837,246 +1599,153 @@ always @(*) begin
     endcase
 end
 always @(*) begin
-    vtg_vactive_clockdomainsrenamer_next_value1 <= 1'd0;
+    hactive_next_value_ce0 <= 1'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    if ((vtg_source_payload_vcount == 1'd0)) begin
-                        vtg_vactive_clockdomainsrenamer_next_value1 <= 1'd1;
-                    end
-                    if ((vtg_source_payload_vcount == vtg_vres)) begin
-                        vtg_vactive_clockdomainsrenamer_next_value1 <= 1'd0;
-                    end
+            if (source_ready) begin
+                if ((source_payload_hcount == 1'd0)) begin
+                    hactive_next_value_ce0 <= 1'd1;
+                end
+                if ((source_payload_hcount == hres)) begin
+                    hactive_next_value_ce0 <= 1'd1;
                 end
             end
         end
         default: begin
-            vtg_vactive_clockdomainsrenamer_next_value1 <= 1'd0;
+            hactive_next_value_ce0 <= 1'd1;
         end
     endcase
 end
 always @(*) begin
-    vtg_vactive_clockdomainsrenamer_next_value_ce1 <= 1'd0;
+    source_payload_vsync_next_value_ce7 <= 1'd0;
     case (clockdomainsrenamer_state)
         1'd1: begin
-            if (vtg_source_ready) begin
-                if ((vtg_source_payload_hcount == vtg_hsync_start)) begin
-                    if ((vtg_source_payload_vcount == 1'd0)) begin
-                        vtg_vactive_clockdomainsrenamer_next_value_ce1 <= 1'd1;
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    if ((source_payload_vcount == vsync_start)) begin
+                        source_payload_vsync_next_value_ce7 <= 1'd1;
                     end
-                    if ((vtg_source_payload_vcount == vtg_vres)) begin
-                        vtg_vactive_clockdomainsrenamer_next_value_ce1 <= 1'd1;
+                    if ((source_payload_vcount == vsync_end)) begin
+                        source_payload_vsync_next_value_ce7 <= 1'd1;
                     end
                 end
             end
         end
         default: begin
-            vtg_vactive_clockdomainsrenamer_next_value_ce1 <= 1'd1;
         end
     endcase
 end
-assign vfb_conv_converter_sink_valid = vfb_dma_source_valid;
-assign vfb_dma_source_ready = vfb_conv_converter_sink_ready;
-assign vfb_conv_converter_sink_first = vfb_dma_source_first;
-assign vfb_conv_converter_sink_last = vfb_dma_source_last;
-assign vfb_conv_converter_sink_payload_data = vfb_dma_source_payload_data;
-assign vfb_cdc_sink_sink_valid = vfb_conv_source_source_valid;
-assign vfb_conv_source_source_ready = vfb_cdc_sink_sink_ready;
-assign vfb_cdc_sink_sink_first = vfb_conv_source_source_first;
-assign vfb_cdc_sink_sink_last = vfb_conv_source_source_last;
-assign vfb_cdc_sink_sink_payload_data = vfb_conv_source_source_payload_data;
-assign vfb_source_payload_r = vfb_cdc_source_source_payload_data[7:0];
-assign vfb_source_payload_g = vfb_cdc_source_source_payload_data[15:8];
-assign vfb_source_payload_b = vfb_cdc_source_source_payload_data[23:16];
-assign vfb_underflow = (~vfb_source_valid);
-assign vfb_conv_source_source_valid = vfb_conv_converter_source_valid;
-assign vfb_conv_converter_source_ready = vfb_conv_source_source_ready;
-assign vfb_conv_source_source_first = vfb_conv_converter_source_first;
-assign vfb_conv_source_source_last = vfb_conv_converter_source_last;
-assign vfb_conv_source_source_payload_data = vfb_conv_converter_source_payload_data;
-assign vfb_conv_converter_source_valid = vfb_conv_converter_sink_valid;
-assign vfb_conv_converter_sink_ready = vfb_conv_converter_source_ready;
-assign vfb_conv_converter_source_first = vfb_conv_converter_sink_first;
-assign vfb_conv_converter_source_last = vfb_conv_converter_sink_last;
-assign vfb_conv_converter_source_payload_data = vfb_conv_converter_sink_payload_data;
-assign vfb_conv_converter_source_payload_valid_token_count = 1'd1;
-assign vfb_cdc_cdc_sink_valid = vfb_cdc_sink_sink_valid;
-assign vfb_cdc_sink_sink_ready = vfb_cdc_cdc_sink_ready;
-assign vfb_cdc_cdc_sink_first = vfb_cdc_sink_sink_first;
-assign vfb_cdc_cdc_sink_last = vfb_cdc_sink_sink_last;
-assign vfb_cdc_cdc_sink_payload_data = vfb_cdc_sink_sink_payload_data;
-assign vfb_cdc_source_source_valid = vfb_cdc_cdc_source_valid;
-assign vfb_cdc_cdc_source_ready = vfb_cdc_source_source_ready;
-assign vfb_cdc_source_source_first = vfb_cdc_cdc_source_first;
-assign vfb_cdc_source_source_last = vfb_cdc_cdc_source_last;
-assign vfb_cdc_source_source_payload_data = vfb_cdc_cdc_source_payload_data;
-assign vfb_cdc_cdc_asyncfifo_din = {vfb_cdc_cdc_fifo_in_last, vfb_cdc_cdc_fifo_in_first, vfb_cdc_cdc_fifo_in_payload_data};
-assign {vfb_cdc_cdc_fifo_out_last, vfb_cdc_cdc_fifo_out_first, vfb_cdc_cdc_fifo_out_payload_data} = vfb_cdc_cdc_asyncfifo_dout;
-assign {vfb_cdc_cdc_fifo_out_last, vfb_cdc_cdc_fifo_out_first, vfb_cdc_cdc_fifo_out_payload_data} = vfb_cdc_cdc_asyncfifo_dout;
-assign {vfb_cdc_cdc_fifo_out_last, vfb_cdc_cdc_fifo_out_first, vfb_cdc_cdc_fifo_out_payload_data} = vfb_cdc_cdc_asyncfifo_dout;
-assign vfb_cdc_cdc_sink_ready = vfb_cdc_cdc_asyncfifo_writable;
-assign vfb_cdc_cdc_asyncfifo_we = vfb_cdc_cdc_sink_valid;
-assign vfb_cdc_cdc_fifo_in_first = vfb_cdc_cdc_sink_first;
-assign vfb_cdc_cdc_fifo_in_last = vfb_cdc_cdc_sink_last;
-assign vfb_cdc_cdc_fifo_in_payload_data = vfb_cdc_cdc_sink_payload_data;
-assign vfb_cdc_cdc_source_valid = vfb_cdc_cdc_asyncfifo_readable;
-assign vfb_cdc_cdc_source_first = vfb_cdc_cdc_fifo_out_first;
-assign vfb_cdc_cdc_source_last = vfb_cdc_cdc_fifo_out_last;
-assign vfb_cdc_cdc_source_payload_data = vfb_cdc_cdc_fifo_out_payload_data;
-assign vfb_cdc_cdc_asyncfifo_re = vfb_cdc_cdc_source_ready;
-assign vfb_cdc_cdc_graycounter0_ce = (vfb_cdc_cdc_asyncfifo_writable & vfb_cdc_cdc_asyncfifo_we);
-assign vfb_cdc_cdc_graycounter1_ce = (vfb_cdc_cdc_asyncfifo_readable & vfb_cdc_cdc_asyncfifo_re);
-assign vfb_cdc_cdc_asyncfifo_writable = (((vfb_cdc_cdc_graycounter0_q[2] == vfb_cdc_cdc_consume_wdomain[2]) | (vfb_cdc_cdc_graycounter0_q[1] == vfb_cdc_cdc_consume_wdomain[1])) | (vfb_cdc_cdc_graycounter0_q[0] != vfb_cdc_cdc_consume_wdomain[0]));
-assign vfb_cdc_cdc_asyncfifo_readable = (vfb_cdc_cdc_graycounter1_q != vfb_cdc_cdc_produce_rdomain);
-assign vfb_cdc_cdc_wrport_adr = vfb_cdc_cdc_graycounter0_q_binary[1:0];
-assign vfb_cdc_cdc_wrport_dat_w = vfb_cdc_cdc_asyncfifo_din;
-assign vfb_cdc_cdc_wrport_we = vfb_cdc_cdc_graycounter0_ce;
-assign vfb_cdc_cdc_rdport_adr = vfb_cdc_cdc_graycounter1_q_next_binary[1:0];
-assign vfb_cdc_cdc_asyncfifo_dout = vfb_cdc_cdc_rdport_dat_r;
 always @(*) begin
-    vfb_cdc_cdc_graycounter0_q_next_binary <= 3'd0;
-    if (vfb_cdc_cdc_graycounter0_ce) begin
-        vfb_cdc_cdc_graycounter0_q_next_binary <= (vfb_cdc_cdc_graycounter0_q_binary + 1'd1);
-    end else begin
-        vfb_cdc_cdc_graycounter0_q_next_binary <= vfb_cdc_cdc_graycounter0_q_binary;
-    end
-end
-assign vfb_cdc_cdc_graycounter0_q_next = (vfb_cdc_cdc_graycounter0_q_next_binary ^ vfb_cdc_cdc_graycounter0_q_next_binary[2:1]);
-always @(*) begin
-    vfb_cdc_cdc_graycounter1_q_next_binary <= 3'd0;
-    if (vfb_cdc_cdc_graycounter1_ce) begin
-        vfb_cdc_cdc_graycounter1_q_next_binary <= (vfb_cdc_cdc_graycounter1_q_binary + 1'd1);
-    end else begin
-        vfb_cdc_cdc_graycounter1_q_next_binary <= vfb_cdc_cdc_graycounter1_q_binary;
-    end
-end
-assign vfb_cdc_cdc_graycounter1_q_next = (vfb_cdc_cdc_graycounter1_q_next_binary ^ vfb_cdc_cdc_graycounter1_q_next_binary[2:1]);
-always @(*) begin
-    videoframebuffer_next_state <= 1'd0;
-    videoframebuffer_next_state <= videoframebuffer_state;
-    case (videoframebuffer_state)
+    vactive_next_value1 <= 1'd0;
+    case (clockdomainsrenamer_state)
         1'd1: begin
-            if ((vfb_vtg_sink_valid & vfb_vtg_sink_payload_de)) begin
-                if ((vfb_cdc_source_source_valid & vfb_cdc_source_source_last)) begin
-                    videoframebuffer_next_state <= 1'd0;
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    if ((source_payload_vcount == 1'd0)) begin
+                        vactive_next_value1 <= 1'd1;
+                    end
+                    if ((source_payload_vcount == vres)) begin
+                        vactive_next_value1 <= 1'd0;
+                    end
                 end
             end
         end
         default: begin
-            if ((vfb_vtg_sink_valid & vfb_vtg_sink_last)) begin
-                videoframebuffer_next_state <= 1'd1;
-            end
+            vactive_next_value1 <= 1'd0;
         end
     endcase
 end
 always @(*) begin
-    vfb_source_payload_hsync <= 1'd0;
-    case (videoframebuffer_state)
+    vactive_next_value_ce1 <= 1'd0;
+    case (clockdomainsrenamer_state)
         1'd1: begin
-            vfb_source_payload_hsync <= vfb_vtg_sink_payload_hsync;
-        end
-        default: begin
-            vfb_source_payload_hsync <= vfb_vtg_sink_payload_hsync;
-        end
-    endcase
-end
-always @(*) begin
-    vfb_source_payload_vsync <= 1'd0;
-    case (videoframebuffer_state)
-        1'd1: begin
-            vfb_source_payload_vsync <= vfb_vtg_sink_payload_vsync;
-        end
-        default: begin
-            vfb_source_payload_vsync <= vfb_vtg_sink_payload_vsync;
-        end
-    endcase
-end
-always @(*) begin
-    vfb_vtg_sink_ready <= 1'd0;
-    case (videoframebuffer_state)
-        1'd1: begin
-            vfb_vtg_sink_ready <= 1'd1;
-            if ((vfb_vtg_sink_valid & vfb_vtg_sink_payload_de)) begin
-                vfb_vtg_sink_ready <= (vfb_source_valid & vfb_source_ready);
-            end
-        end
-        default: begin
-            vfb_vtg_sink_ready <= 1'd1;
-            if (vfb_reset) begin
-                vfb_vtg_sink_ready <= 1'd0;
-            end
-        end
-    endcase
-end
-always @(*) begin
-    vfb_source_payload_de <= 1'd0;
-    case (videoframebuffer_state)
-        1'd1: begin
-            vfb_source_payload_de <= vfb_vtg_sink_payload_de;
-        end
-        default: begin
-        end
-    endcase
-end
-always @(*) begin
-    vfb_first_videoframebuffer_next_value <= 1'd0;
-    case (videoframebuffer_state)
-        1'd1: begin
-            if ((vfb_vtg_sink_valid & vfb_vtg_sink_payload_de)) begin
-                if ((vfb_cdc_source_source_valid & vfb_cdc_source_source_last)) begin
-                    vfb_first_videoframebuffer_next_value <= 1'd0;
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    if ((source_payload_vcount == 1'd0)) begin
+                        vactive_next_value_ce1 <= 1'd1;
+                    end
+                    if ((source_payload_vcount == vres)) begin
+                        vactive_next_value_ce1 <= 1'd1;
+                    end
                 end
             end
         end
         default: begin
-            if (vfb_reset) begin
-                vfb_first_videoframebuffer_next_value <= 1'd1;
-            end
+            vactive_next_value_ce1 <= 1'd1;
         end
     endcase
 end
 always @(*) begin
-    vfb_cdc_source_source_ready <= 1'd0;
-    case (videoframebuffer_state)
+    source_payload_hsync_next_value6 <= 1'd0;
+    case (clockdomainsrenamer_state)
         1'd1: begin
-            if ((vfb_vtg_sink_valid & vfb_vtg_sink_payload_de)) begin
-                vfb_cdc_source_source_ready <= vfb_source_ready;
-            end
-        end
-        default: begin
-        end
-    endcase
-end
-always @(*) begin
-    vfb_first_videoframebuffer_next_value_ce <= 1'd0;
-    case (videoframebuffer_state)
-        1'd1: begin
-            if ((vfb_vtg_sink_valid & vfb_vtg_sink_payload_de)) begin
-                if ((vfb_cdc_source_source_valid & vfb_cdc_source_source_last)) begin
-                    vfb_first_videoframebuffer_next_value_ce <= 1'd1;
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    source_payload_hsync_next_value6 <= 1'd1;
+                end
+                if ((source_payload_hcount == hsync_end)) begin
+                    source_payload_hsync_next_value6 <= 1'd0;
                 end
             end
         end
         default: begin
-            if (vfb_reset) begin
-                vfb_first_videoframebuffer_next_value_ce <= 1'd1;
-            end
         end
     endcase
 end
 always @(*) begin
-    vfb_source_valid <= 1'd0;
-    case (videoframebuffer_state)
+    source_payload_hres_next_value2 <= 12'd0;
+    case (clockdomainsrenamer_state)
         1'd1: begin
-            if ((vfb_vtg_sink_valid & vfb_vtg_sink_payload_de)) begin
-                vfb_source_valid <= vfb_cdc_source_source_valid;
-                if (vfb_first) begin
-                    vfb_source_valid <= 1'd0;
+        end
+        default: begin
+            source_payload_hres_next_value2 <= hres;
+        end
+    endcase
+end
+always @(*) begin
+    source_payload_hsync_next_value_ce6 <= 1'd0;
+    case (clockdomainsrenamer_state)
+        1'd1: begin
+            if (source_ready) begin
+                if ((source_payload_hcount == hsync_start)) begin
+                    source_payload_hsync_next_value_ce6 <= 1'd1;
+                end
+                if ((source_payload_hcount == hsync_end)) begin
+                    source_payload_hsync_next_value_ce6 <= 1'd1;
                 end
             end
         end
         default: begin
+        end
+    endcase
+end
+always @(*) begin
+    source_payload_hres_next_value_ce2 <= 1'd0;
+    case (clockdomainsrenamer_state)
+        1'd1: begin
+        end
+        default: begin
+            source_payload_hres_next_value_ce2 <= 1'd1;
+        end
+    endcase
+end
+always @(*) begin
+    source_payload_vres_next_value3 <= 12'd0;
+    case (clockdomainsrenamer_state)
+        1'd1: begin
+        end
+        default: begin
+            source_payload_vres_next_value3 <= vres;
+        end
+    endcase
+end
+always @(*) begin
+    source_payload_vres_next_value_ce3 <= 1'd0;
+    case (clockdomainsrenamer_state)
+        1'd1: begin
+        end
+        default: begin
+            source_payload_vres_next_value_ce3 <= 1'd1;
         end
     endcase
 end
@@ -2091,16 +1760,6 @@ always @(*) begin
             if ((interface0_cyc & interface0_stb)) begin
                 wishbone2csr_next_state <= 1'd1;
             end
-        end
-    endcase
-end
-always @(*) begin
-    interface0_ack <= 1'd0;
-    case (wishbone2csr_state)
-        1'd1: begin
-            interface0_ack <= 1'd1;
-        end
-        default: begin
         end
     endcase
 end
@@ -2148,133 +1807,143 @@ always @(*) begin
         end
     endcase
 end
+always @(*) begin
+    interface0_ack <= 1'd0;
+    case (wishbone2csr_state)
+        1'd1: begin
+            interface0_ack <= 1'd1;
+        end
+        default: begin
+        end
+    endcase
+end
 assign sel = (bank_bus_adr[13:9] == 1'd0);
 assign enable0_r = bank_bus_dat_w[0];
-always @(*) begin
-    enable0_re <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 1'd0))) begin
-        enable0_re <= bank_bus_we;
-    end
-end
 always @(*) begin
     enable0_we <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 1'd0))) begin
         enable0_we <= (~bank_bus_we);
     end
 end
-assign hres0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    hres0_we <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 1'd1))) begin
-        hres0_we <= (~bank_bus_we);
+    enable0_re <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 1'd0))) begin
+        enable0_re <= bank_bus_we;
     end
 end
+assign hres0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     hres0_re <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 1'd1))) begin
         hres0_re <= bank_bus_we;
     end
 end
-assign hsync_start0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    hsync_start0_re <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 2'd2))) begin
-        hsync_start0_re <= bank_bus_we;
+    hres0_we <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 1'd1))) begin
+        hres0_we <= (~bank_bus_we);
     end
 end
+assign hsync_start0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     hsync_start0_we <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 2'd2))) begin
         hsync_start0_we <= (~bank_bus_we);
     end
 end
-assign hsync_end0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    hsync_end0_we <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 2'd3))) begin
-        hsync_end0_we <= (~bank_bus_we);
+    hsync_start0_re <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 2'd2))) begin
+        hsync_start0_re <= bank_bus_we;
     end
 end
+assign hsync_end0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     hsync_end0_re <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 2'd3))) begin
         hsync_end0_re <= bank_bus_we;
     end
 end
-assign hscan0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    hscan0_we <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 3'd4))) begin
-        hscan0_we <= (~bank_bus_we);
+    hsync_end0_we <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 2'd3))) begin
+        hsync_end0_we <= (~bank_bus_we);
     end
 end
+assign hscan0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     hscan0_re <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 3'd4))) begin
         hscan0_re <= bank_bus_we;
     end
 end
-assign vres0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    vres0_re <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 3'd5))) begin
-        vres0_re <= bank_bus_we;
+    hscan0_we <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 3'd4))) begin
+        hscan0_we <= (~bank_bus_we);
     end
 end
+assign vres0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     vres0_we <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 3'd5))) begin
         vres0_we <= (~bank_bus_we);
     end
 end
-assign vsync_start0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    vsync_start0_we <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 3'd6))) begin
-        vsync_start0_we <= (~bank_bus_we);
+    vres0_re <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 3'd5))) begin
+        vres0_re <= bank_bus_we;
     end
 end
+assign vsync_start0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     vsync_start0_re <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 3'd6))) begin
         vsync_start0_re <= bank_bus_we;
     end
 end
-assign vsync_end0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    vsync_end0_re <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 3'd7))) begin
-        vsync_end0_re <= bank_bus_we;
+    vsync_start0_we <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 3'd6))) begin
+        vsync_start0_we <= (~bank_bus_we);
     end
 end
+assign vsync_end0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     vsync_end0_we <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 3'd7))) begin
         vsync_end0_we <= (~bank_bus_we);
     end
 end
-assign vscan0_r = bank_bus_dat_w[11:0];
 always @(*) begin
-    vscan0_re <= 1'd0;
-    if ((sel & (bank_bus_adr[8:0] == 4'd8))) begin
-        vscan0_re <= bank_bus_we;
+    vsync_end0_re <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 3'd7))) begin
+        vsync_end0_re <= bank_bus_we;
     end
 end
+assign vscan0_r = bank_bus_dat_w[11:0];
 always @(*) begin
     vscan0_we <= 1'd0;
     if ((sel & (bank_bus_adr[8:0] == 4'd8))) begin
         vscan0_we <= (~bank_bus_we);
     end
 end
-assign enable0_w = vtg_enable_storage;
-assign hres0_w = vtg_hres_storage[11:0];
-assign hsync_start0_w = vtg_hsync_start_storage[11:0];
-assign hsync_end0_w = vtg_hsync_end_storage[11:0];
-assign hscan0_w = vtg_hscan_storage[11:0];
-assign vres0_w = vtg_vres_storage[11:0];
-assign vsync_start0_w = vtg_vsync_start_storage[11:0];
-assign vsync_end0_w = vtg_vsync_end_storage[11:0];
-assign vscan0_w = vtg_vscan_storage[11:0];
+always @(*) begin
+    vscan0_re <= 1'd0;
+    if ((sel & (bank_bus_adr[8:0] == 4'd8))) begin
+        vscan0_re <= bank_bus_we;
+    end
+end
+assign enable0_w = enable_storage;
+assign hres0_w = hres_storage[11:0];
+assign hsync_start0_w = hsync_start_storage[11:0];
+assign hsync_end0_w = hsync_end_storage[11:0];
+assign hscan0_w = hscan_storage[11:0];
+assign vres0_w = vres_storage[11:0];
+assign vsync_start0_w = vsync_start_storage[11:0];
+assign vsync_end0_w = vsync_end_storage[11:0];
+assign vscan0_w = vscan_storage[11:0];
 assign adr = interface1_adr;
 assign we = interface1_we;
 assign dat_w = interface1_dat_w;
@@ -2397,18 +2066,15 @@ assign videohdmi10to1serializer4_cdc_produce_rdomain = multiregimpl8_regs1;
 assign videohdmi10to1serializer4_cdc_consume_wdomain = multiregimpl9_regs1;
 assign videohdmi10to1serializer5_cdc_produce_rdomain = multiregimpl10_regs1;
 assign videohdmi10to1serializer5_cdc_consume_wdomain = multiregimpl11_regs1;
-assign vtg_enable = multiregimpl12_regs1;
-assign vtg_hres = multiregimpl13_regs1;
-assign vtg_hsync_start = multiregimpl14_regs1;
-assign vtg_hsync_end = multiregimpl15_regs1;
-assign vtg_hscan = multiregimpl16_regs1;
-assign vtg_vres = multiregimpl17_regs1;
-assign vtg_vsync_start = multiregimpl18_regs1;
-assign vtg_vsync_end = multiregimpl19_regs1;
-assign vtg_vscan = multiregimpl20_regs1;
-assign vfb_cdc_cdc_produce_rdomain = multiregimpl21_regs1;
-assign vfb_cdc_cdc_consume_wdomain = multiregimpl22_regs1;
-assign vfb_reset = multiregimpl23_regs1;
+assign enable = multiregimpl12_regs1;
+assign hres = multiregimpl13_regs1;
+assign hsync_start = multiregimpl14_regs1;
+assign hsync_end = multiregimpl15_regs1;
+assign hscan = multiregimpl16_regs1;
+assign vres = multiregimpl17_regs1;
+assign vsync_start = multiregimpl18_regs1;
+assign vsync_end = multiregimpl19_regs1;
+assign vscan = multiregimpl20_regs1;
 
 
 //------------------------------------------------------------------------------
@@ -2716,53 +2382,43 @@ always @(posedge hdmi_clk) begin
     end
     videohdmi10to1serializer5_cdc_graycounter10_q_binary <= videohdmi10to1serializer5_cdc_graycounter10_q_next_binary;
     videohdmi10to1serializer5_cdc_graycounter10_q <= videohdmi10to1serializer5_cdc_graycounter10_q_next;
-    vtg_source_first <= ((vtg_source_payload_hcount == 1'd0) & (vtg_source_payload_vcount == 1'd0));
-    vtg_source_last <= ((vtg_source_payload_hcount == vtg_hscan) & (vtg_source_payload_vcount == vtg_vscan));
+    source_first <= ((source_payload_hcount == 1'd0) & (source_payload_vcount == 1'd0));
+    source_last <= ((source_payload_hcount == hscan) & (source_payload_vcount == vscan));
     clockdomainsrenamer_state <= clockdomainsrenamer_next_state;
-    if (vtg_hactive_clockdomainsrenamer_next_value_ce0) begin
-        vtg_hactive <= vtg_hactive_clockdomainsrenamer_next_value0;
+    if (hactive_next_value_ce0) begin
+        hactive <= hactive_next_value0;
     end
-    if (vtg_vactive_clockdomainsrenamer_next_value_ce1) begin
-        vtg_vactive <= vtg_vactive_clockdomainsrenamer_next_value1;
+    if (vactive_next_value_ce1) begin
+        vactive <= vactive_next_value1;
     end
-    if (vtg_source_payload_hres_clockdomainsrenamer_next_value_ce2) begin
-        vtg_source_payload_hres <= vtg_source_payload_hres_clockdomainsrenamer_next_value2;
+    if (source_payload_hres_next_value_ce2) begin
+        source_payload_hres <= source_payload_hres_next_value2;
     end
-    if (vtg_source_payload_vres_clockdomainsrenamer_next_value_ce3) begin
-        vtg_source_payload_vres <= vtg_source_payload_vres_clockdomainsrenamer_next_value3;
+    if (source_payload_vres_next_value_ce3) begin
+        source_payload_vres <= source_payload_vres_next_value3;
     end
-    if (vtg_source_payload_hcount_clockdomainsrenamer_next_value_ce4) begin
-        vtg_source_payload_hcount <= vtg_source_payload_hcount_clockdomainsrenamer_next_value4;
+    if (source_payload_hcount_next_value_ce4) begin
+        source_payload_hcount <= source_payload_hcount_next_value4;
     end
-    if (vtg_source_payload_vcount_clockdomainsrenamer_next_value_ce5) begin
-        vtg_source_payload_vcount <= vtg_source_payload_vcount_clockdomainsrenamer_next_value5;
+    if (source_payload_vcount_next_value_ce5) begin
+        source_payload_vcount <= source_payload_vcount_next_value5;
     end
-    if (vtg_source_payload_hsync_clockdomainsrenamer_next_value_ce6) begin
-        vtg_source_payload_hsync <= vtg_source_payload_hsync_clockdomainsrenamer_next_value6;
+    if (source_payload_hsync_next_value_ce6) begin
+        source_payload_hsync <= source_payload_hsync_next_value6;
     end
-    if (vtg_source_payload_vsync_clockdomainsrenamer_next_value_ce7) begin
-        vtg_source_payload_vsync <= vtg_source_payload_vsync_clockdomainsrenamer_next_value7;
+    if (source_payload_vsync_next_value_ce7) begin
+        source_payload_vsync <= source_payload_vsync_next_value7;
     end
-    if (vtg_reset) begin
-        vtg_source_payload_hsync <= 1'd0;
-        vtg_source_payload_vsync <= 1'd0;
-        vtg_source_payload_hres <= 12'd0;
-        vtg_source_payload_vres <= 12'd0;
-        vtg_source_payload_hcount <= 12'd0;
-        vtg_source_payload_vcount <= 12'd0;
-        vtg_hactive <= 1'd0;
-        vtg_vactive <= 1'd0;
+    if (reset) begin
+        source_payload_hsync <= 1'd0;
+        source_payload_vsync <= 1'd0;
+        source_payload_hres <= 12'd0;
+        source_payload_vres <= 12'd0;
+        source_payload_hcount <= 12'd0;
+        source_payload_vcount <= 12'd0;
+        hactive <= 1'd0;
+        vactive <= 1'd0;
         clockdomainsrenamer_state <= 1'd0;
-    end
-    vfb_cdc_cdc_graycounter1_q_binary <= vfb_cdc_cdc_graycounter1_q_next_binary;
-    vfb_cdc_cdc_graycounter1_q <= vfb_cdc_cdc_graycounter1_q_next;
-    videoframebuffer_state <= videoframebuffer_next_state;
-    if (vfb_first_videoframebuffer_next_value_ce) begin
-        vfb_first <= vfb_first_videoframebuffer_next_value;
-    end
-    if (vfb_reset) begin
-        vfb_first <= 1'd0;
-        videoframebuffer_state <= 1'd0;
     end
     if (hdmi_rst) begin
         tmdsencoder0_out <= 10'd0;
@@ -2861,19 +2517,15 @@ always @(posedge hdmi_clk) begin
         tmdsencoder5_new_de2 <= 1'd0;
         videohdmi10to1serializer5_cdc_graycounter10_q <= 3'd0;
         videohdmi10to1serializer5_cdc_graycounter10_q_binary <= 3'd0;
-        vtg_source_payload_hsync <= 1'd0;
-        vtg_source_payload_vsync <= 1'd0;
-        vtg_source_payload_hres <= 12'd0;
-        vtg_source_payload_vres <= 12'd0;
-        vtg_source_payload_hcount <= 12'd0;
-        vtg_source_payload_vcount <= 12'd0;
-        vtg_hactive <= 1'd0;
-        vtg_vactive <= 1'd0;
-        vfb_cdc_cdc_graycounter1_q <= 3'd0;
-        vfb_cdc_cdc_graycounter1_q_binary <= 3'd0;
-        vfb_first <= 1'd0;
+        source_payload_hsync <= 1'd0;
+        source_payload_vsync <= 1'd0;
+        source_payload_hres <= 12'd0;
+        source_payload_vres <= 12'd0;
+        source_payload_hcount <= 12'd0;
+        source_payload_vcount <= 12'd0;
+        hactive <= 1'd0;
+        vactive <= 1'd0;
         clockdomainsrenamer_state <= 1'd0;
-        videoframebuffer_state <= 1'd0;
     end
     multiregimpl1_regs0 <= videohdmi10to1serializer0_cdc_graycounter1_q;
     multiregimpl1_regs1 <= multiregimpl1_regs0;
@@ -2887,28 +2539,24 @@ always @(posedge hdmi_clk) begin
     multiregimpl9_regs1 <= multiregimpl9_regs0;
     multiregimpl11_regs0 <= videohdmi10to1serializer5_cdc_graycounter11_q;
     multiregimpl11_regs1 <= multiregimpl11_regs0;
-    multiregimpl12_regs0 <= vtg_enable_storage;
+    multiregimpl12_regs0 <= enable_storage;
     multiregimpl12_regs1 <= multiregimpl12_regs0;
-    multiregimpl13_regs0 <= vtg_hres_storage;
+    multiregimpl13_regs0 <= hres_storage;
     multiregimpl13_regs1 <= multiregimpl13_regs0;
-    multiregimpl14_regs0 <= vtg_hsync_start_storage;
+    multiregimpl14_regs0 <= hsync_start_storage;
     multiregimpl14_regs1 <= multiregimpl14_regs0;
-    multiregimpl15_regs0 <= vtg_hsync_end_storage;
+    multiregimpl15_regs0 <= hsync_end_storage;
     multiregimpl15_regs1 <= multiregimpl15_regs0;
-    multiregimpl16_regs0 <= vtg_hscan_storage;
+    multiregimpl16_regs0 <= hscan_storage;
     multiregimpl16_regs1 <= multiregimpl16_regs0;
-    multiregimpl17_regs0 <= vtg_vres_storage;
+    multiregimpl17_regs0 <= vres_storage;
     multiregimpl17_regs1 <= multiregimpl17_regs0;
-    multiregimpl18_regs0 <= vtg_vsync_start_storage;
+    multiregimpl18_regs0 <= vsync_start_storage;
     multiregimpl18_regs1 <= multiregimpl18_regs0;
-    multiregimpl19_regs0 <= vtg_vsync_end_storage;
+    multiregimpl19_regs0 <= vsync_end_storage;
     multiregimpl19_regs1 <= multiregimpl19_regs0;
-    multiregimpl20_regs0 <= vtg_vscan_storage;
+    multiregimpl20_regs0 <= vscan_storage;
     multiregimpl20_regs1 <= multiregimpl20_regs0;
-    multiregimpl21_regs0 <= vfb_cdc_cdc_graycounter0_q;
-    multiregimpl21_regs1 <= multiregimpl21_regs0;
-    multiregimpl23_regs0 <= vfb_dma_reset;
-    multiregimpl23_regs1 <= multiregimpl23_regs0;
 end
 
 always @(posedge hdmi5x_clk) begin
@@ -3157,8 +2805,6 @@ always @(posedge hdmi5x_clk) begin
 end
 
 always @(posedge sys_clk) begin
-    vfb_cdc_cdc_graycounter0_q_binary <= vfb_cdc_cdc_graycounter0_q_next_binary;
-    vfb_cdc_cdc_graycounter0_q <= vfb_cdc_cdc_graycounter0_q_next;
     wishbone2csr_state <= wishbone2csr_next_state;
     bank_bus_dat_r <= 1'd0;
     if (sel) begin
@@ -3193,66 +2839,62 @@ always @(posedge sys_clk) begin
         endcase
     end
     if (enable0_re) begin
-        vtg_enable_storage <= enable0_r;
+        enable_storage <= enable0_r;
     end
-    vtg_enable_re <= enable0_re;
+    enable_re <= enable0_re;
     if (hres0_re) begin
-        vtg_hres_storage[11:0] <= hres0_r;
+        hres_storage[11:0] <= hres0_r;
     end
-    vtg_hres_re <= hres0_re;
+    hres_re <= hres0_re;
     if (hsync_start0_re) begin
-        vtg_hsync_start_storage[11:0] <= hsync_start0_r;
+        hsync_start_storage[11:0] <= hsync_start0_r;
     end
-    vtg_hsync_start_re <= hsync_start0_re;
+    hsync_start_re <= hsync_start0_re;
     if (hsync_end0_re) begin
-        vtg_hsync_end_storage[11:0] <= hsync_end0_r;
+        hsync_end_storage[11:0] <= hsync_end0_r;
     end
-    vtg_hsync_end_re <= hsync_end0_re;
+    hsync_end_re <= hsync_end0_re;
     if (hscan0_re) begin
-        vtg_hscan_storage[11:0] <= hscan0_r;
+        hscan_storage[11:0] <= hscan0_r;
     end
-    vtg_hscan_re <= hscan0_re;
+    hscan_re <= hscan0_re;
     if (vres0_re) begin
-        vtg_vres_storage[11:0] <= vres0_r;
+        vres_storage[11:0] <= vres0_r;
     end
-    vtg_vres_re <= vres0_re;
+    vres_re <= vres0_re;
     if (vsync_start0_re) begin
-        vtg_vsync_start_storage[11:0] <= vsync_start0_r;
+        vsync_start_storage[11:0] <= vsync_start0_r;
     end
-    vtg_vsync_start_re <= vsync_start0_re;
+    vsync_start_re <= vsync_start0_re;
     if (vsync_end0_re) begin
-        vtg_vsync_end_storage[11:0] <= vsync_end0_r;
+        vsync_end_storage[11:0] <= vsync_end0_r;
     end
-    vtg_vsync_end_re <= vsync_end0_re;
+    vsync_end_re <= vsync_end0_re;
     if (vscan0_re) begin
-        vtg_vscan_storage[11:0] <= vscan0_r;
+        vscan_storage[11:0] <= vscan0_r;
     end
-    vtg_vscan_re <= vscan0_re;
+    vscan_re <= vscan0_re;
     if (sys_rst) begin
-        vtg_enable_storage <= 1'd1;
-        vtg_enable_re <= 1'd0;
-        vtg_hres_storage <= 12'd720;
-        vtg_hres_re <= 1'd0;
-        vtg_hsync_start_storage <= 12'd760;
-        vtg_hsync_start_re <= 1'd0;
-        vtg_hsync_end_storage <= 12'd780;
-        vtg_hsync_end_re <= 1'd0;
-        vtg_hscan_storage <= 12'd819;
-        vtg_hscan_re <= 1'd0;
-        vtg_vres_storage <= 12'd720;
-        vtg_vres_re <= 1'd0;
-        vtg_vsync_start_storage <= 12'd744;
-        vtg_vsync_start_re <= 1'd0;
-        vtg_vsync_end_storage <= 12'd748;
-        vtg_vsync_end_re <= 1'd0;
-        vtg_vscan_storage <= 12'd759;
-        vtg_vscan_re <= 1'd0;
-        vfb_cdc_cdc_graycounter0_q <= 3'd0;
-        vfb_cdc_cdc_graycounter0_q_binary <= 3'd0;
+        enable_storage <= 1'd1;
+        enable_re <= 1'd0;
+        hres_storage <= 12'd720;
+        hres_re <= 1'd0;
+        hsync_start_storage <= 12'd760;
+        hsync_start_re <= 1'd0;
+        hsync_end_storage <= 12'd780;
+        hsync_end_re <= 1'd0;
+        hscan_storage <= 12'd819;
+        hscan_re <= 1'd0;
+        vres_storage <= 12'd720;
+        vres_re <= 1'd0;
+        vsync_start_storage <= 12'd744;
+        vsync_start_re <= 1'd0;
+        vsync_end_storage <= 12'd748;
+        vsync_end_re <= 1'd0;
+        vscan_storage <= 12'd759;
+        vscan_re <= 1'd0;
         wishbone2csr_state <= 1'd0;
     end
-    multiregimpl22_regs0 <= vfb_cdc_cdc_graycounter1_q;
-    multiregimpl22_regs1 <= multiregimpl22_regs0;
 end
 
 
@@ -3381,26 +3023,6 @@ assign videohdmi10to1serializer5_cdc_rdport_dat_r = storage_5_dat1;
 
 
 //------------------------------------------------------------------------------
-// Memory storage_6: 4-words x 34-bit
-//------------------------------------------------------------------------------
-// Port 0 | Read: Sync  | Write: Sync | Mode: Read-First  | Write-Granularity: 34 
-// Port 1 | Read: Sync  | Write: ---- | 
-reg [33:0] storage_6[0:3];
-reg [33:0] storage_6_dat0;
-reg [33:0] storage_6_dat1;
-always @(posedge sys_clk) begin
-	if (vfb_cdc_cdc_wrport_we)
-		storage_6[vfb_cdc_cdc_wrport_adr] <= vfb_cdc_cdc_wrport_dat_w;
-	storage_6_dat0 <= storage_6[vfb_cdc_cdc_wrport_adr];
-end
-always @(posedge hdmi_clk) begin
-	storage_6_dat1 <= storage_6[vfb_cdc_cdc_rdport_adr];
-end
-assign vfb_cdc_cdc_wrport_dat_r = storage_6_dat0;
-assign vfb_cdc_cdc_rdport_dat_r = storage_6_dat1;
-
-
-//------------------------------------------------------------------------------
 // Instance ODDRX1F of ODDRX1F Module.
 //------------------------------------------------------------------------------
 ODDRX1F ODDRX1F(
@@ -3507,5 +3129,5 @@ ODDRX1F ODDRX1F_7(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2024-04-23 09:11:34.
+//  Auto-Generated by LiteX on 2024-04-23 15:14:12.
 //------------------------------------------------------------------------------

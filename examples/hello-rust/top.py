@@ -52,25 +52,16 @@ class LxVideo(Elaboratable):
 
         gpdi = gpdi_from_pmod(platform, 0)
 
-        platform.add_file("lxvid.v", open("lxvid.v"))
+        platform.add_file("build/lxvid.v", open("lxvid.v"))
 
-        dma_stream_position = Signal(32)
-        dma_stream_first = Signal()
-        dma_stream_last  = Signal()
-        dma_stream_ready  = Signal()
+        vtg_hcount = Signal(12)
+        vtg_vcount = Signal(12)
 
-        with m.If(dma_stream_ready):
-            with m.If(dma_stream_position != 720*720 - 1):
-                m.d.sync += [
-                    dma_stream_position.eq(dma_stream_position + 1)
-                ]
-            with m.Else():
-                m.d.sync += [
-                    dma_stream_position.eq(0)
-                ]
-            m.d.sync += [
-                dma_stream_first.eq(dma_stream_position == 0),
-                dma_stream_last.eq(dma_stream_position == 720*720-1),
+        counter = Signal(8)
+
+        with m.If((vtg_hcount == 0) & (vtg_vcount == 0)):
+            m.d.hdmi += [
+                counter.eq(counter + 1)
             ]
 
         m.submodules.vlxvid = Instance("lxvid",
@@ -82,13 +73,6 @@ class LxVideo(Elaboratable):
             i_rst_hdmi = ResetSignal("hdmi"),
             i_rst_hdmi5x = ResetSignal("hdmi5x"),
 
-            i_dma_stream_valid = 1,
-            i_dma_stream_data  = dma_stream_position,
-            i_dma_stream_first = dma_stream_first,
-            i_dma_stream_last  = dma_stream_last,
-            i_dma_stream_reset  = dma_stream_first,
-            o_dma_stream_ready  = dma_stream_ready,
-
             o_gpdi_clk_n = gpdi.clk_n.o,
             o_gpdi_clk_p = gpdi.clk_p.o,
             o_gpdi_data0_n = gpdi.data0_n.o,
@@ -97,6 +81,13 @@ class LxVideo(Elaboratable):
             o_gpdi_data1_p = gpdi.data1_p.o,
             o_gpdi_data2_n = gpdi.data2_n.o,
             o_gpdi_data2_p = gpdi.data2_p.o,
+
+            o_vtg_hcount = vtg_hcount,
+            o_vtg_vcount = vtg_vcount,
+
+            i_phy_r = vtg_hcount[0:7] + counter,
+            i_phy_g = vtg_vcount[0:7] + counter,
+            i_phy_b = 0,
         )
 
         return m
