@@ -12,7 +12,7 @@ from luna_soc.gateware.soc                       import LunaSoC
 from luna_soc.gateware.csr                       import GpioPeripheral, LedPeripheral
 from luna_soc.gateware.csr.hyperram              import HyperRAMPeripheral
 
-from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal
+from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal
 from amaranth.build                              import *
 from amaranth.hdl.rec                            import Record
 
@@ -54,6 +54,25 @@ class LxVideo(Elaboratable):
 
         platform.add_file("lxvid.v", open("lxvid.v"))
 
+        dma_stream_position = Signal(32)
+        dma_stream_first = Signal()
+        dma_stream_last  = Signal()
+        dma_stream_ready  = Signal()
+
+        with m.If(dma_stream_ready):
+            with m.If(dma_stream_position != 720*720 - 1):
+                m.d.sync += [
+                    dma_stream_position.eq(dma_stream_position + 1)
+                ]
+            with m.Else():
+                m.d.sync += [
+                    dma_stream_position.eq(0)
+                ]
+            m.d.sync += [
+                dma_stream_first.eq(dma_stream_position == 0),
+                dma_stream_last.eq(dma_stream_position == 720*720-1),
+            ]
+
         m.submodules.vlxvid = Instance("lxvid",
             i_clk_sys = ClockSignal("sync"),
             i_clk_hdmi = ClockSignal("hdmi"),
@@ -62,6 +81,13 @@ class LxVideo(Elaboratable):
             i_rst_sys = ResetSignal("sync"),
             i_rst_hdmi = ResetSignal("hdmi"),
             i_rst_hdmi5x = ResetSignal("hdmi5x"),
+
+            i_dma_stream_valid = 1,
+            i_dma_stream_data  = dma_stream_position,
+            i_dma_stream_first = dma_stream_first,
+            i_dma_stream_last  = dma_stream_last,
+            i_dma_stream_reset  = dma_stream_first,
+            o_dma_stream_ready  = dma_stream_ready,
 
             o_gpdi_clk_n = gpdi.clk_n.o,
             o_gpdi_clk_p = gpdi.clk_p.o,
