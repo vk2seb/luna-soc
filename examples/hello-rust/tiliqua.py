@@ -115,13 +115,15 @@ class TiliquaDomainGenerator(Elaboratable):
         m.domains.fast   = ClockDomain()
         m.domains.audio  = ClockDomain()
         m.domains.raw48  = ClockDomain()
+        m.domains.hdmi  = ClockDomain()
+        m.domains.hdmi5x  = ClockDomain()
 
 
         clk48 = platform.request(platform.default_clk, dir='i').i
         reset  = platform.request(platform.default_rst, dir='i').i
         #reset  = Signal(1, reset=0)
 
-        # ecppll -i 48 --clkout0 60 --clkout1 60 --reset -f pll60.v
+        # ecppll -i 48 --clkout0 60 --clkout1 60 --clkout2 40 --clkout3 200 --reset -f pll60.v
         # 60MHz for USB (currently also fast + sync domains)
 
         m.d.comb += [
@@ -138,6 +140,8 @@ class TiliquaDomainGenerator(Elaboratable):
                 # Generated clock outputs.
                 o_CLKOP=feedback60,
                 o_CLKOS=ClockSignal("usb"),
+                o_CLKOS2=ClockSignal("hdmi"),
+                o_CLKOS3=ClockSignal("hdmi5x"),
 
                 # Status.
                 o_LOCK=locked60,
@@ -160,6 +164,14 @@ class TiliquaDomainGenerator(Elaboratable):
                 p_CLKOS_DIV=10,
                 p_CLKOS_CPHASE=4,
                 p_CLKOS_FPHASE=0,
+                p_CLKOS2_ENABLE="ENABLED",
+                p_CLKOS2_DIV=15,
+                p_CLKOS2_CPHASE=4,
+                p_CLKOS2_FPHASE=0,
+                p_CLKOS3_ENABLE="ENABLED",
+                p_CLKOS3_DIV=3,
+                p_CLKOS3_CPHASE=4,
+                p_CLKOS3_FPHASE=0,
                 p_FEEDBK_PATH="CLKOP",
                 p_CLKFB_DIV=5,
 
@@ -260,6 +272,9 @@ class TiliquaDomainGenerator(Elaboratable):
             ResetSignal("sync")  .eq(~locked60),
             ResetSignal("fast")  .eq(~locked60),
             ResetSignal("usb")   .eq(~locked60),
+
+            ResetSignal("hdmi").eq(~locked60),
+            ResetSignal("hdmi5x").eq(~locked60),
 
             ResetSignal("audio")   .eq(~locked12),
         ]

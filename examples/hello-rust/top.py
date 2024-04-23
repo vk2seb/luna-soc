@@ -12,7 +12,8 @@ from luna_soc.gateware.soc                       import LunaSoC
 from luna_soc.gateware.csr                       import GpioPeripheral, LedPeripheral
 from luna_soc.gateware.csr.hyperram              import HyperRAMPeripheral
 
-from amaranth                                    import Elaboratable, Module, Cat
+from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal
+from amaranth.build                              import *
 from amaranth.hdl.rec                            import Record
 
 import logging
@@ -22,6 +23,57 @@ import sys
 CLOCK_FREQUENCIES_MHZ = {
     'sync': 60
 }
+
+def gpdi_from_pmod(platform, pmod_index):
+    gpdi = [
+        Resource(f"gpdi{pmod_index}", pmod_index,
+            Subsignal("data2_p", Pins("1",  conn=("pmod", pmod_index), dir='o')),
+            Subsignal("data1_p", Pins("2",  conn=("pmod", pmod_index), dir='o')),
+            Subsignal("data0_p", Pins("3",  conn=("pmod", pmod_index), dir='o')),
+            Subsignal("clk_p",   Pins("4",  conn=("pmod", pmod_index), dir='o')),
+            Subsignal("data2_n", Pins("7",  conn=("pmod", pmod_index), dir='o')),
+            Subsignal("data1_n", Pins("8",  conn=("pmod", pmod_index), dir='o')),
+            Subsignal("data0_n", Pins("9",  conn=("pmod", pmod_index), dir='o')),
+            Subsignal("clk_n",   Pins("10", conn=("pmod", pmod_index), dir='o')),
+            Attrs(IO_TYPE="LVCMOS33"),
+        )
+    ]
+    platform.add_resources(gpdi)
+    return platform.request(f"gpdi{pmod_index}")
+
+class LxVideo(Elaboratable):
+
+    def __init__(self):
+        super().__init__()
+        pass
+
+    def elaborate(self, platform) -> Module:
+        m = Module()
+
+        gpdi = gpdi_from_pmod(platform, 0)
+
+        platform.add_file("lxvid.v", open("lxvid.v"))
+
+        m.submodules.vlxvid = Instance("lxvid",
+            i_clk_sys = ClockSignal("sync"),
+            i_clk_hdmi = ClockSignal("hdmi"),
+            i_clk_hdmi5x = ClockSignal("hdmi5x"),
+
+            i_rst_sys = ResetSignal("sync"),
+            i_rst_hdmi = ResetSignal("hdmi"),
+            i_rst_hdmi5x = ResetSignal("hdmi5x"),
+
+            o_gpdi_clk_n = gpdi.clk_n.o,
+            o_gpdi_clk_p = gpdi.clk_p.o,
+            o_gpdi_data0_n = gpdi.data0_n.o,
+            o_gpdi_data0_p = gpdi.data0_p.o,
+            o_gpdi_data1_n = gpdi.data1_n.o,
+            o_gpdi_data1_p = gpdi.data1_p.o,
+            o_gpdi_data2_n = gpdi.data2_n.o,
+            o_gpdi_data2_p = gpdi.data2_p.o,
+        )
+
+        return m
 
 # - HelloSoc ------------------------------------------------------------------
 
@@ -67,6 +119,9 @@ class HelloSoc(Elaboratable):
         ]
         if hasattr(uart_io.tx, 'oe'):
             m.d.comb += uart_io.tx.oe.eq(~self.soc.uart._phy.tx.rdy),
+
+        # video
+        m.submodules.video = LxVideo()
 
         return m
 
