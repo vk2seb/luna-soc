@@ -18,6 +18,8 @@ from amaranth.hdl.rec                            import Record
 
 from amaranth_soc            import wishbone
 
+from luna.gateware.debug.ila import AsyncSerialILA
+
 import logging
 import os
 import sys
@@ -249,6 +251,64 @@ class HelloSoc(Elaboratable):
         # video
         m.submodules.video = self.video
 
+        # ila
+        test_signal = Signal(32, reset=0xDEADBEEF)
+
+        ila_signals = [
+            test_signal,
+
+            self.video.bus.cyc,
+            self.video.bus.stb,
+            self.video.bus.adr,
+            self.video.bus.we,
+            self.video.bus.dat_r,
+            self.video.bus.dat_w,
+            self.video.bus.ack,
+            self.video.bus.cti,
+
+            self.video.fifo.w_level,
+
+            self.soc.hyperram.psram.address,
+            self.soc.hyperram.psram.register_space,
+            self.soc.hyperram.psram.perform_write,
+            self.soc.hyperram.psram.single_page,
+            self.soc.hyperram.psram.start_transfer,
+
+            self.soc.hyperram.psram.final_word,
+            self.soc.hyperram.psram.read_data,
+            self.soc.hyperram.psram.write_data,
+
+            self.soc.hyperram.psram.idle,
+            self.soc.hyperram.psram.read_ready,
+            self.soc.hyperram.psram.write_ready,
+
+            self.soc.hyperram.psram.fsm_state,
+        ]
+
+        for s in ila_signals:
+            print(s)
+
+        self.ila = AsyncSerialILA(signals=ila_signals,
+                                  sample_depth=4096, divisor=60,
+                                  domain='sync', sample_rate=60e6) # 1MBaud on USB clock
+
+        pmod_uart = [
+            Resource("pmod_uart", 0,
+                Subsignal("tx",  Pins("1", conn=("pmod", 1), dir='o')),
+                Subsignal("rx",  Pins("2", conn=("pmod", 1), dir='i')),
+                Attrs(IO_TYPE="LVCMOS33"),
+            )
+        ]
+
+        platform.add_resources(pmod_uart)
+
+        m.d.comb += [
+            self.ila.trigger.eq(ClockSignal("sync")),
+            platform.request("pmod_uart").tx.o.eq(self.ila.tx),
+        ]
+
+        m.submodules.ila = self.ila
+
         return m
 
 
@@ -326,6 +386,12 @@ if __name__ == "__main__":
         generate.memory_x(file=f)
 
     print("Build completed. Use 'make load' to load bitstream to device.")
+
+    print("waiting for ILA")
+
+    from luna.gateware.debug.ila import AsyncSerialILAFrontend
+    frontend = AsyncSerialILAFrontend("/dev/ttyUSB1", baudrate=1000000, ila=design.ila)
+    frontend.emit_vcd("out.vcd")
 
     # TODO
     #top_level_cli(design)
