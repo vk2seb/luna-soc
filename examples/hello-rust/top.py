@@ -49,11 +49,11 @@ from amaranth.lib.fifo import AsyncFIFO
 
 class LxVideo(Elaboratable):
 
-    def __init__(self, fb_base=None, fifo_depth=64):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=64):
         super().__init__()
 
-        self.bus = wishbone.Interface(addr_width=30, data_width=32, granularity=8,
-                                      features={"cti", "bte", "err"})
+        self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
+                                      features={"cti", "bte"}, name="video")
 
         self.fifo = AsyncFIFO(width=32, depth=fifo_depth, r_domain='hdmi', w_domain='sync')
 
@@ -61,6 +61,13 @@ class LxVideo(Elaboratable):
         self.fb_base = fb_base
         self.fb_hsize = 720
         self.fb_vsize = 720
+
+        self.dma_addr = Signal(32)
+
+        # hdmi domain
+        self.bytecounter = Signal(2)
+        self.last_word   = Signal(32)
+        self.consume_started = Signal(1, reset=0)
 
     def elaborate(self, platform) -> Module:
         m = Module()
@@ -118,7 +125,7 @@ class LxVideo(Elaboratable):
 
         bus = self.bus
 
-        dma_addr = Signal(32)
+        dma_addr = self.dma_addr
 
         fb_len_words = (self.fb_hsize*self.fb_vsize) // 4
 
@@ -149,10 +156,10 @@ class LxVideo(Elaboratable):
                         bus.cyc.eq(1),
                         bus.we.eq(0),
                         bus.sel.eq(2**(bus.data_width//8)-1),
-                        bus.adr.eq(self.fb_base + dma_addr),
+                        bus.adr.eq(self.fb_base + dma_addr), # FIXME
                         self.fifo.w_data.eq(bus.dat_r),
                     ]
-                    with m.If(self.fifo.w_level == self.fifo_depth-1):
+                    with m.If(self.fifo.w_level == self.fifo_depth):
                         m.d.comb += bus.cti.eq(
                                 wishbone.CycleType.END_OF_BURST)
                     with m.Else():
@@ -160,8 +167,8 @@ class LxVideo(Elaboratable):
                                 wishbone.CycleType.INCR_BURST)
                     with m.If(bus.stb & bus.ack):
                         m.d.comb += self.fifo.w_en.eq(1)
-                        with m.If(dma_addr < (fb_len_words-1) << 2):
-                            m.d.sync += dma_addr.eq(dma_addr + 4)
+                        with m.If(dma_addr < (fb_len_words-1)):
+                            m.d.sync += dma_addr.eq(dma_addr + 1)
                         with m.Else():
                             m.d.sync += dma_addr.eq(0)
                 with m.Else():
@@ -173,12 +180,12 @@ class LxVideo(Elaboratable):
 
         # FIFO -> PHY (1 word -> 4 pixels)
 
-        bytecounter = Signal(2)
-        last_word   = Signal(32)
-        consume_started = Signal(1, reset=0)
+        bytecounter = self.bytecounter
+        last_word   = self.last_word
+        consume_started = self.consume_started
 
         with m.If((vtg_hcount == 0) & (vtg_vcount == 0) &
-                  self.fifo.r_level > self.fifo_depth//2):
+                  (self.fifo.r_level > (self.fifo_depth//2))):
             m.d.hdmi += consume_started.eq(1)
 
         with m.If(consume_started):
@@ -226,11 +233,12 @@ class HelloSoc(Elaboratable):
         # ... add memory-mapped hyperram peripheral (128Mbit)
         hyperram_base = 0x20000000
         self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
-        self.soc.add_peripheral(self.soc.hyperram, addr=hyperram_base)
 
         # ... add memory-mapped framebuffer output that drives hyperram
-        self.video = LxVideo(fb_base=hyperram_base)
-        self.soc._bus_arbiter.add(self.video.bus)
+        self.video = LxVideo(fb_base=0x0, bus_master=self.soc.hyperram.bus)
+        self.soc.hyperram.add_master(self.video.bus)
+
+        self.soc.add_peripheral(self.soc.hyperram, addr=hyperram_base)
 
     def elaborate(self, platform):
         m = Module()
@@ -257,16 +265,21 @@ class HelloSoc(Elaboratable):
         ila_signals = [
             test_signal,
 
-            self.video.bus.cyc,
-            self.video.bus.stb,
-            self.video.bus.adr,
-            self.video.bus.we,
-            self.video.bus.dat_r,
-            self.video.bus.dat_w,
-            self.video.bus.ack,
-            self.video.bus.cti,
+            self.soc.hyperram.shared_bus.cyc,
+            self.soc.hyperram.shared_bus.stb,
+            self.soc.hyperram.shared_bus.adr,
+            self.soc.hyperram.shared_bus.we,
+            self.soc.hyperram.shared_bus.dat_r,
+            self.soc.hyperram.shared_bus.dat_w,
+            self.soc.hyperram.shared_bus.ack,
+            self.soc.hyperram.shared_bus.cti,
 
+            self.video.dma_addr,
             self.video.fifo.w_level,
+            self.video.fifo.w_rdy,
+            self.video.bytecounter,
+            self.video.consume_started,
+            self.video.last_word,
 
             self.soc.hyperram.psram.address,
             self.soc.hyperram.psram.register_space,
@@ -303,7 +316,7 @@ class HelloSoc(Elaboratable):
         platform.add_resources(pmod_uart)
 
         m.d.comb += [
-            self.ila.trigger.eq(ClockSignal("sync")),
+            self.ila.trigger.eq(self.soc.hyperram.bus.stb & self.soc.hyperram.bus.cyc),
             platform.request("pmod_uart").tx.o.eq(self.ila.tx),
         ]
 
@@ -390,7 +403,7 @@ if __name__ == "__main__":
     print("waiting for ILA")
 
     from luna.gateware.debug.ila import AsyncSerialILAFrontend
-    frontend = AsyncSerialILAFrontend("/dev/ttyUSB1", baudrate=1000000, ila=design.ila)
+    frontend = AsyncSerialILAFrontend("/dev/ttyUSB0", baudrate=1000000, ila=design.ila)
     frontend.emit_vcd("out.vcd")
 
     # TODO

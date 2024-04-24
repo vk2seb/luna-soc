@@ -45,15 +45,19 @@ fn main() -> ! {
 
         let start = timer.counter();
 
-        for i in 0..(1024*1024*4) {
-            hram_ptr.offset(i).write_volatile(i as u32);
+        //const n = 1024*1024*4;
+        const n: isize = 64;
+
+        for i in 0..n {
+            hram_ptr.offset(i).write_volatile(0xDEAD0000u32 | i as u32);
         }
 
         let endwrite = timer.counter();
 
-        for i in 0..(1024*1024*4) {
-            if (i as u32) != hram_ptr.offset(i).read_volatile() {
-                info!("hyperram FL @ {:#x}", i);
+        for i in 0..n {
+            let got = hram_ptr.offset(i).read_volatile();
+            if got != (0xDEAD0000u32 | i as u32) {
+                info!("hyperram FL @ {:#x}, got {:#x}", i, got);
             }
         }
 
