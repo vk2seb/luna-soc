@@ -45,12 +45,12 @@ def gpdi_from_pmod(platform, pmod_index):
     platform.add_resources(gpdi)
     return platform.request(f"gpdi{pmod_index}")
 
-from amaranth.lib.fifo import AsyncFIFO
+from amaranth.lib.fifo import AsyncFIFO, SyncFIFO
 from amaranth.lib.cdc import FFSynchronizer
 
 class LxVideo(Elaboratable):
 
-    def __init__(self, fb_base=None, bus_master=None, fifo_depth=128):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=256):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
@@ -120,8 +120,6 @@ class LxVideo(Elaboratable):
             i_phy_g = phy_g,
             i_phy_b = phy_b,
         )
-
-
 
         # how?
 
@@ -222,6 +220,100 @@ class LxVideo(Elaboratable):
 
         return m
 
+class Persistance(Elaboratable):
+
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=32, holdoff=256):
+        super().__init__()
+
+        self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
+                                      features={"cti", "bte"}, name="video")
+
+        self.fifo = SyncFIFO(width=32, depth=fifo_depth)
+
+        self.holdoff = holdoff
+
+        self.fifo_depth = fifo_depth
+        self.fb_base = fb_base
+        self.fb_hsize = 720
+        self.fb_vsize = 720
+
+        self.dma_addr_in = Signal(32, reset=1)
+        self.dma_addr_out = Signal(32)
+
+    def elaborate(self, platform) -> Module:
+        m = Module()
+
+        m.submodules.fifo = self.fifo
+
+        bus = self.bus
+
+        dma_addr_in = self.dma_addr_in
+        dma_addr_out = self.dma_addr_out
+
+        fb_len_words = (self.fb_hsize*self.fb_vsize) // 4
+
+        holdoff_count = Signal(32)
+
+        with m.FSM() as fsm:
+
+            with m.State('BURST-IN'):
+                m.d.sync += holdoff_count.eq(0)
+                m.d.comb += [
+                    bus.stb.eq(1),
+                    bus.cyc.eq(1),
+                    bus.we.eq(0),
+                    bus.sel.eq(2**(bus.data_width//8)-1),
+                    bus.adr.eq(self.fb_base + dma_addr_in), 
+                    self.fifo.w_data.eq(bus.dat_r),
+                ]
+                with m.If(~self.fifo.w_rdy):
+                    m.d.comb += bus.cti.eq(
+                            wishbone.CycleType.END_OF_BURST)
+                    m.next = 'WAIT1'
+                with m.Else():
+                    m.d.comb += bus.cti.eq(
+                            wishbone.CycleType.INCR_BURST)
+                with m.If(bus.stb & bus.ack & self.fifo.w_rdy): # WARN: drops last word
+                    m.d.comb += self.fifo.w_en.eq(1)
+                    with m.If(dma_addr_in < (fb_len_words-1)):
+                        m.d.sync += dma_addr_in.eq(dma_addr_in + 1)
+                    with m.Else():
+                        m.d.sync += dma_addr_in.eq(0)
+
+            with m.State('WAIT1'):
+                m.next = 'BURST-OUT'
+
+            with m.State('BURST-OUT'):
+                m.d.comb += [
+                    bus.stb.eq(1),
+                    bus.cyc.eq(1),
+                    bus.we.eq(1),
+                    bus.sel.eq(2**(bus.data_width//8)-1),
+                    bus.adr.eq(self.fb_base + dma_addr_out),
+                    bus.dat_w.eq((self.fifo.r_data >> 1) & 0x7f7f7f7f),
+                ]
+
+                with m.If(~self.fifo.r_rdy):
+                    m.d.comb += bus.cti.eq(
+                            wishbone.CycleType.END_OF_BURST)
+                    m.next = 'WAIT2'
+                with m.Else():
+                    m.d.comb += bus.cti.eq(
+                            wishbone.CycleType.INCR_BURST)
+                with m.If(bus.stb & bus.ack & self.fifo.r_rdy):
+                    m.d.comb += self.fifo.r_en.eq(1)
+                    with m.If(dma_addr_out < (fb_len_words-1)):
+                        m.d.sync += dma_addr_out.eq(dma_addr_out + 1)
+                    with m.Else():
+                        m.d.sync += dma_addr_out.eq(0)
+
+            with m.State('WAIT2'):
+                m.d.sync += holdoff_count.eq(holdoff_count + 1)
+                with m.If(holdoff_count == self.holdoff):
+                    m.next = 'BURST-IN'
+
+        return m
+
 # - HelloSoc ------------------------------------------------------------------
 
 class HelloSoc(Elaboratable):
@@ -257,6 +349,9 @@ class HelloSoc(Elaboratable):
 
         self.soc.add_peripheral(self.soc.hyperram, addr=hyperram_base)
 
+        self.persist = Persistance(fb_base=0x0, bus_master=self.soc.hyperram.bus)
+        self.soc.hyperram.add_master(self.persist.bus)
+
     def elaborate(self, platform):
         m = Module()
         m.submodules.soc = self.soc
@@ -275,6 +370,7 @@ class HelloSoc(Elaboratable):
 
         # video
         m.submodules.video = self.video
+        m.submodules.persist = self.persist
 
         # ila
         test_signal = Signal(32, reset=0xDEADBEEF)
@@ -297,6 +393,9 @@ class HelloSoc(Elaboratable):
             self.video.bytecounter,
             self.video.consume_started,
             self.video.last_word,
+
+            self.persist.dma_addr_in,
+            self.persist.dma_addr_out,
 
             self.soc.hyperram.psram.address,
             self.soc.hyperram.psram.register_space,

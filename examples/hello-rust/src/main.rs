@@ -92,13 +92,6 @@ fn main() -> ! {
                 timer.delay_ms(1).unwrap();
             }
 
-
-            for x in 0..720 {
-                let y = (f32::sin((x as f32)/50.0f32) * 100.0f32 + 360.0f32) as isize;
-                hram_ptr.offset(y*(720/4) + (x + 720/4)/4).write_volatile(0);
-                timer.delay_ms(1).unwrap();
-            }
-
             /*
             cnt_x += 1;
             if (cnt_x > 720-1) {
