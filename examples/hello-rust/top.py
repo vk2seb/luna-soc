@@ -10,7 +10,6 @@ from luna.gateware.usb.usb2.device               import USBDevice
 from luna_soc.gateware.cpu.vexriscv              import VexRiscv
 from luna_soc.gateware.soc                       import LunaSoC
 from luna_soc.gateware.csr                       import GpioPeripheral, LedPeripheral
-from luna_soc.gateware.csr.hyperram              import HyperRAMPeripheral
 
 from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal, signed
 from amaranth.build                              import *
@@ -19,6 +18,12 @@ from amaranth.hdl.rec                            import Record
 from amaranth_soc            import wishbone
 
 from luna.gateware.debug.ila import AsyncSerialILA
+
+from lambdasoc.periph import Peripheral
+from amaranth.utils import log2_int
+from amaranth_soc.memory import MemoryMap
+
+from psram import HyperRAMDQSPHY, HyperRAMDQSInterface
 
 import eurorack_pmod
 
@@ -380,6 +385,102 @@ class Draw(Elaboratable):
 
         return m
 
+class HyperRAMPeripheral(Peripheral, Elaboratable):
+    """HyperRAM peripheral.
+
+    Parameters
+    ----------
+    size : int
+        Memory size in bytes.
+    data_width : int
+        Bus data width.
+    granularity : int
+        Bus granularity.
+
+    Attributes
+    ----------
+    bus : :class:`amaranth_soc.wishbone.Interface`
+        Wishbone bus interface.
+    """
+    def __init__(self, *, size, data_width=32, granularity=8):
+        super().__init__()
+
+        if not isinstance(size, int) or size <= 0 or size & size-1:
+            raise ValueError("Size must be an integer power of two, not {!r}"
+                             .format(size))
+        if size < data_width // granularity:
+            raise ValueError("Size {} cannot be lesser than the data width/granularity ratio "
+                             "of {} ({} / {})"
+                              .format(size, data_width // granularity, data_width, granularity))
+
+        self.mem_depth = (size * granularity) // data_width
+
+        self.bus = wishbone.Interface(addr_width=log2_int(self.mem_depth),
+                                      data_width=data_width, granularity=granularity,
+                                      features={"cti", "bte"}, name="hram_upstream")
+
+        self._hram_arbiter = wishbone.Arbiter(addr_width=log2_int(self.mem_depth),
+                                              data_width=data_width, granularity=granularity,
+                                              features={"cti", "bte"})
+        self._hram_arbiter.add(self.bus)
+        self.shared_bus = self._hram_arbiter.bus
+
+        map = MemoryMap(addr_width=log2_int(size), data_width=granularity, name=self.name)
+        map.add_resource("placeholder_hyperram", name="mem", size=size)
+        self.bus.memory_map = map
+
+        self.size        = size
+        self.granularity = granularity
+
+        self.psram_phy = HyperRAMDQSPHY(bus=None)
+        self.psram = HyperRAMDQSInterface(phy=self.psram_phy.phy)
+
+    def add_master(self, bus):
+        self._hram_arbiter.add(bus)
+
+    @property
+    def constant_map(self):
+        return ConstantMap(
+            SIZE = self.size,
+        )
+
+    def elaborate(self, platform):
+        m = Module()
+
+        m.submodules.arbiter    = self._hram_arbiter
+
+        self.psram_phy.bus = platform.request('ram', dir={'rwds':'-', 'dq':'-', 'cs':'-'})
+        m.submodules += [self.psram_phy, self.psram]
+        psram = self.psram
+
+        m.d.comb += [
+            self.psram_phy.bus.reset.o        .eq(0),
+            psram.single_page      .eq(0),
+            psram.register_space   .eq(0),
+            psram.perform_write.eq(self.shared_bus.we),
+        ]
+
+        with m.FSM() as fsm:
+            with m.State('IDLE'):
+                with m.If(self.shared_bus.cyc & self.shared_bus.stb & psram.idle):
+                    m.d.sync += [
+                        psram.start_transfer.eq(1),
+                        psram.write_data.eq(self.shared_bus.dat_w),
+                        psram.address.eq(self.shared_bus.adr << 1),
+                    ]
+                    m.next = 'GO'
+            with m.State('GO'):
+                m.d.sync += psram.start_transfer.eq(0),
+                with m.If(psram.read_ready | psram.write_ready):
+                    m.d.comb += self.shared_bus.dat_r.eq(psram.read_data),
+                    m.d.comb += self.shared_bus.ack.eq(1)
+                    m.d.sync += psram.write_data.eq(self.shared_bus.dat_w),
+                    with m.If(self.shared_bus.cti != wishbone.CycleType.INCR_BURST):
+                        m.d.comb += psram.final_word.eq(1)
+                        m.next = 'IDLE'
+
+        return m
+
 
 # - HelloSoc ------------------------------------------------------------------
 
@@ -409,18 +510,19 @@ class HelloSoc(Elaboratable):
         # ... add memory-mapped hyperram peripheral (128Mbit)
         hyperram_base = 0x20000000
         self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
+        self.soc.add_peripheral(self.soc.hyperram, addr=hyperram_base)
 
+        """
         # ... add memory-mapped framebuffer output that drives hyperram
         self.video = LxVideo(fb_base=0x0, bus_master=self.soc.hyperram.bus)
         self.soc.hyperram.add_master(self.video.bus)
-
-        self.soc.add_peripheral(self.soc.hyperram, addr=hyperram_base)
 
         self.persist = Persistance(fb_base=0x0, bus_master=self.soc.hyperram.bus)
         self.soc.hyperram.add_master(self.persist.bus)
 
         self.draw = Draw(fb_base=0x0, bus_master=self.soc.hyperram.bus)
         self.soc.hyperram.add_master(self.draw.bus)
+        """
 
     def elaborate(self, platform):
         m = Module()
@@ -439,12 +541,13 @@ class HelloSoc(Elaboratable):
             m.d.comb += uart_io.tx.oe.eq(~self.soc.uart._phy.tx.rdy),
 
         # video
+        """
         m.submodules.video = self.video
         m.submodules.persist = self.persist
         m.submodules.draw = self.draw
+        """
 
         # ila
-        """
         test_signal = Signal(32, reset=0xDEADBEEF)
 
         ila_signals = [
@@ -459,20 +562,31 @@ class HelloSoc(Elaboratable):
             self.soc.hyperram.shared_bus.ack,
             self.soc.hyperram.shared_bus.cti,
 
-            self.video.dma_addr,
-            self.video.fifo.w_level,
-            self.video.fifo.w_rdy,
-            self.video.bytecounter,
-            self.video.consume_started,
-            self.video.last_word,
+            self.soc.hyperram.psram.idle,
+            self.soc.hyperram.psram.address,
+            self.soc.hyperram.psram.write_data,
+            self.soc.hyperram.psram.read_data,
+            self.soc.hyperram.psram.read_ready,
+            self.soc.hyperram.psram.write_ready,
+            self.soc.hyperram.psram.start_transfer,
 
-            self.persist.dma_addr_in,
-            self.persist.dma_addr_out,
-
-            self.draw.fs_strobe,
-            self.draw.sample_x,
-            self.draw.sample_y,
         ]
+
+        """
+        self.video.dma_addr,
+        self.video.fifo.w_level,
+        self.video.fifo.w_rdy,
+        self.video.bytecounter,
+        self.video.consume_started,
+        self.video.last_word,
+
+        self.persist.dma_addr_in,
+        self.persist.dma_addr_out,
+
+        self.draw.fs_strobe,
+        self.draw.sample_x,
+        self.draw.sample_y,
+        """
 
         for s in ila_signals:
             print(s)
@@ -492,12 +606,14 @@ class HelloSoc(Elaboratable):
         platform.add_resources(pmod_uart)
 
         m.d.comb += [
-            self.ila.trigger.eq(self.soc.hyperram.bus.stb & self.soc.hyperram.bus.cyc),
+            self.ila.trigger.eq(
+                self.soc.hyperram.shared_bus.cyc &
+                self.soc.hyperram.shared_bus.stb
+            ),
             platform.request("pmod_uart").tx.o.eq(self.ila.tx),
         ]
 
         m.submodules.ila = self.ila
-        """
 
         return m
 

@@ -48,61 +48,11 @@ fn main() -> ! {
 
         let start = timer.counter();
 
-        //const n: isize = 1024*1024*1;
-        //const n: isize = 64;
-        const n: isize = 720*720/4;
-
-        let mut cnt_x: isize = 0;
+        //const n: isize = 16;
+        const n: isize = 1024*1024*4;
 
         for i in 0..n {
-            hram_ptr.offset(i).write_volatile(0);
-        }
-
-        loop {
-
-
-
-            /*
-
-            info!("up");
-
-            for i in 0..n {
-                hram_ptr.offset(i).write_volatile(0);
-            }
-
-            info!("dn");
-
-            for i in 0..n {
-                hram_ptr.offset(i).write_volatile(0xffffffffu32);
-            }
-
-            */
-
-            //info!("wht");
-
-            /*
-            for i in 0..n {
-                hram_ptr.offset(i).write_volatile(0);
-            }
-            */
-
-            for x in 0..720 {
-                let y = (f32::sin((x as f32)/50.0f32) * 100.0f32 + 360.0f32) as isize;
-                hram_ptr.offset(y*(720/4) + (x + 720/4)/4).write_volatile(0xffffffffu32);
-                timer.delay_ms(1).unwrap();
-            }
-
-            /*
-            cnt_x += 1;
-            if (cnt_x > 720-1) {
-                cnt_x = 0;
-            }
-            */
-
-            /*
-            timer.delay_ms(500).unwrap();
-            */
-
+            hram_ptr.offset(i).write_volatile((0xDEAD0000u32 | i as u32));
         }
 
         let endwrite = timer.counter();
@@ -115,6 +65,20 @@ fn main() -> ! {
         }
 
         let endread = timer.counter();
+
+        for i in 0..n {
+            let got = hram_ptr.offset(i).read_volatile();
+            if got != (0xDEAD0000u32 | i as u32) {
+                info!("hyperram FL @ {:#x}, got {:#x}", i, got);
+            }
+        }
+
+        for i in 0..n {
+            let got = hram_ptr.offset(i).read_volatile();
+            if got != (0xDEAD0000u32 | i as u32) {
+                info!("hyperram FL @ {:#x}, got {:#x}", i, got);
+            }
+        }
 
         let write_ticks = start-endwrite;
         let read_ticks = endwrite-endread;
