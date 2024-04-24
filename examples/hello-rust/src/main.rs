@@ -13,6 +13,9 @@ use log::{debug, info};
 use panic_halt as _;
 use riscv_rt::entry;
 
+#[allow(unused_imports)]
+use micromath::F32Ext;
+
 #[riscv_rt::pre_init]
 unsafe fn pre_main() {
     pac::cpu::vexriscv::flush_icache();
@@ -51,13 +54,15 @@ fn main() -> ! {
 
         let mut cnt_x: isize = 0;
 
+        for i in 0..n {
+            hram_ptr.offset(i).write_volatile(0);
+        }
+
         loop {
 
-            /*
 
-            for i in 0..n {
-                hram_ptr.offset(i).write_volatile(i as u32);
-            }
+
+            /*
 
             info!("up");
 
@@ -75,12 +80,23 @@ fn main() -> ! {
 
             //info!("wht");
 
+            /*
             for i in 0..n {
                 hram_ptr.offset(i).write_volatile(0);
             }
+            */
 
-            for y in 0..720 {
-                hram_ptr.offset(y*(720/4) + 720/8).write_volatile(0xffffffffu32);
+            for x in 0..720 {
+                let y = (f32::sin((x as f32)/50.0f32) * 100.0f32 + 360.0f32) as isize;
+                hram_ptr.offset(y*(720/4) + (x + 720/4)/4).write_volatile(0xffffffffu32);
+                timer.delay_ms(1).unwrap();
+            }
+
+
+            for x in 0..720 {
+                let y = (f32::sin((x as f32)/50.0f32) * 100.0f32 + 360.0f32) as isize;
+                hram_ptr.offset(y*(720/4) + (x + 720/4)/4).write_volatile(0);
+                timer.delay_ms(1).unwrap();
             }
 
             /*
@@ -90,7 +106,10 @@ fn main() -> ! {
             }
             */
 
+            /*
             timer.delay_ms(500).unwrap();
+            */
+
         }
 
         let endwrite = timer.counter();

@@ -50,7 +50,7 @@ from amaranth.lib.cdc import FFSynchronizer
 
 class LxVideo(Elaboratable):
 
-    def __init__(self, fb_base=None, bus_master=None, fifo_depth=2048):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=128):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
@@ -141,23 +141,17 @@ class LxVideo(Elaboratable):
 
         fb_len_words = (self.fb_hsize*self.fb_vsize) // 4
 
-        """
-        # bus -> FIFO
-        # todo bursts
-        m.d.comb += [
-            bus.stb.eq(self.fifo.w_rdy),
-            bus.cyc.eq(self.fifo.w_rdy),
-            bus.we.eq(0),
-            bus.sel.eq(2**(bus.data_width//8)-1),
-            bus.adr.eq(self.fb_base + dma_addr),
-            self.fifo.w_data.eq(bus.dat_r),
-        ]
-        with m.If(bus.stb & bus.ack):
-            m.d.comb += self.fifo.w_en.eq(1)
-        """
+
+        drain_fifo = Signal(1, reset=0)
+        drain_fifo_hdmi = Signal(1, reset=0)
+
+        m.submodules.drain_fifo_ff = FFSynchronizer(
+                i=drain_fifo, o=drain_fifo_hdmi, o_domain="hdmi")
 
         # bus -> FIFO
         # burst until FIFO is full, then wait until half empty.
+
+        drained = Signal()
 
         # sync domain
         with m.FSM() as fsm:
@@ -185,26 +179,40 @@ class LxVideo(Elaboratable):
                     with m.Else():
                         m.d.sync += dma_addr.eq(0)
             with m.State('WAIT'):
-                with m.If(self.fifo.w_level < self.fifo_depth//2):
+
+                with m.If(~phy_vsync_sync):
+                    m.d.sync += drained.eq(0)
+
+                with m.If(phy_vsync_sync & ~drained):
+                    m.next = 'VSYNC'
+                with m.Elif(self.fifo.w_level < self.fifo_depth//2):
+                    m.next = 'BURST'
+
+            with m.State('VSYNC'):
+                # drain HDMI side. We only want to drain once.
+                with m.If(self.fifo.w_level != 0):
+                    m.d.comb += drain_fifo.eq(1)
+                with m.Else():
+                    m.d.sync += dma_addr.eq(0)
+                    m.d.sync += drained.eq(1)
                     m.next = 'BURST'
 
         # FIFO -> PHY (1 word -> 4 pixels)
 
         bytecounter = self.bytecounter
         last_word   = self.last_word
-        consume_started = self.consume_started
 
-        with m.If((vtg_hcount == 0) & (vtg_vcount == 0) &
-                  (self.fifo.r_level > (self.fifo_depth//2))):
-            m.d.hdmi += consume_started.eq(1)
-
-        with m.If(consume_started & phy_de_hdmi):
+        with m.If(drain_fifo_hdmi):
+            m.d.hdmi += bytecounter.eq(0)
+            m.d.hdmi += self.fifo.r_en.eq(1),
+        with m.Elif(phy_de_hdmi):
             m.d.hdmi += bytecounter.eq(bytecounter+1)
             m.d.hdmi += self.fifo.r_en.eq(bytecounter == 0),
             with m.If(bytecounter == 0):
                 m.d.hdmi += last_word.eq(self.fifo.r_data)
             with m.Else():
                 m.d.hdmi += last_word.eq(last_word >> 8)
+
 
         m.d.comb += [
             phy_r.eq(last_word[0:8]),

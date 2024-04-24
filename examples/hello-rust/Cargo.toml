@@ -14,3 +14,4 @@ lunasoc-pac = { git = "https://github.com/greatscottgadgets/cynthion.git", defau
 lunasoc-hal = { git = "https://github.com/greatscottgadgets/cynthion.git", default-features = false, features = []}
 
 log = "0.4.17"
+micromath = "2.1.0"
