@@ -45,11 +45,29 @@ fn main() -> ! {
 
         let start = timer.counter();
 
-        //const n = 1024*1024*4;
-        const n: isize = 64;
+        //const n: isize = 1024*1024*1;
+        //const n: isize = 64;
+        const n: isize = 720*720/4;
 
-        for i in 0..n {
-            hram_ptr.offset(i).write_volatile(0xDEAD0000u32 | i as u32);
+        loop {
+
+            for i in 0..n {
+                hram_ptr.offset(i).write_volatile(i as u32);
+            }
+
+            info!("up");
+
+            for i in 0..n {
+                hram_ptr.offset(i).write_volatile(0);
+            }
+
+            info!("dn");
+
+            for i in 0..n {
+                hram_ptr.offset(i).write_volatile(0xffffffffu32);
+            }
+
+            info!("wht");
         }
 
         let endwrite = timer.counter();

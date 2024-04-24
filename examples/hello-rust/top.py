@@ -150,30 +150,28 @@ class LxVideo(Elaboratable):
         # sync domain
         with m.FSM() as fsm:
             with m.State('BURST'):
-                with m.If(self.fifo.w_rdy):
-                    m.d.comb += [
-                        bus.stb.eq(1),
-                        bus.cyc.eq(1),
-                        bus.we.eq(0),
-                        bus.sel.eq(2**(bus.data_width//8)-1),
-                        bus.adr.eq(self.fb_base + dma_addr), # FIXME
-                        self.fifo.w_data.eq(bus.dat_r),
-                    ]
-                    with m.If(self.fifo.w_level == self.fifo_depth):
-                        m.d.comb += bus.cti.eq(
-                                wishbone.CycleType.END_OF_BURST)
-                    with m.Else():
-                        m.d.comb += bus.cti.eq(
-                                wishbone.CycleType.INCR_BURST)
-                    with m.If(bus.stb & bus.ack):
-                        m.d.comb += self.fifo.w_en.eq(1)
-                        with m.If(dma_addr < (fb_len_words-1)):
-                            m.d.sync += dma_addr.eq(dma_addr + 1)
-                        with m.Else():
-                            m.d.sync += dma_addr.eq(0)
-                with m.Else():
+                m.d.comb += [
+                    bus.stb.eq(1),
+                    bus.cyc.eq(1),
+                    bus.we.eq(0),
+                    bus.sel.eq(2**(bus.data_width//8)-1),
+                    bus.adr.eq(self.fb_base + dma_addr), # FIXME
+                    self.fifo.w_data.eq(bus.dat_r),
+                ]
+                with m.If(~self.fifo.w_rdy):
                     # FIFO full, hold off for next burst.
+                    m.d.comb += bus.cti.eq(
+                            wishbone.CycleType.END_OF_BURST)
                     m.next = 'WAIT'
+                with m.Else():
+                    m.d.comb += bus.cti.eq(
+                            wishbone.CycleType.INCR_BURST)
+                with m.If(bus.stb & bus.ack & self.fifo.w_rdy): # WARN: drops last word
+                    m.d.comb += self.fifo.w_en.eq(1)
+                    with m.If(dma_addr < (fb_len_words-1)):
+                        m.d.sync += dma_addr.eq(dma_addr + 1)
+                    with m.Else():
+                        m.d.sync += dma_addr.eq(0)
             with m.State('WAIT'):
                 with m.If(self.fifo.w_level < self.fifo_depth//2):
                     m.next = 'BURST'
@@ -198,9 +196,9 @@ class LxVideo(Elaboratable):
 
         m.d.comb += [
             self.fifo.r_en.eq(bytecounter == 3),
-            phy_r.eq(last_word[0:7]),
-            phy_g.eq(last_word[0:7]),
-            phy_b.eq(last_word[0:7]),
+            phy_r.eq(last_word[0:8]),
+            phy_g.eq(last_word[0:8]),
+            phy_b.eq(last_word[0:8]),
         ]
 
         return m
