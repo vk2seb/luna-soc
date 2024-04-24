@@ -49,7 +49,11 @@ fn main() -> ! {
         //const n: isize = 64;
         const n: isize = 720*720/4;
 
+        let mut cnt_x: isize = 0;
+
         loop {
+
+            /*
 
             for i in 0..n {
                 hram_ptr.offset(i).write_volatile(i as u32);
@@ -67,7 +71,26 @@ fn main() -> ! {
                 hram_ptr.offset(i).write_volatile(0xffffffffu32);
             }
 
-            info!("wht");
+            */
+
+            //info!("wht");
+
+            for i in 0..n {
+                hram_ptr.offset(i).write_volatile(0);
+            }
+
+            for y in 0..720 {
+                hram_ptr.offset(y*(720/4) + 720/8).write_volatile(0xffffffffu32);
+            }
+
+            /*
+            cnt_x += 1;
+            if (cnt_x > 720-1) {
+                cnt_x = 0;
+            }
+            */
+
+            timer.delay_ms(500).unwrap();
         }
 
         let endwrite = timer.counter();

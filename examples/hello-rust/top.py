@@ -46,10 +46,11 @@ def gpdi_from_pmod(platform, pmod_index):
     return platform.request(f"gpdi{pmod_index}")
 
 from amaranth.lib.fifo import AsyncFIFO
+from amaranth.lib.cdc import FFSynchronizer
 
 class LxVideo(Elaboratable):
 
-    def __init__(self, fb_base=None, bus_master=None, fifo_depth=64):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=2048):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
@@ -85,6 +86,13 @@ class LxVideo(Elaboratable):
         phy_g = Signal(8)
         phy_b = Signal(8)
 
+        phy_de_hdmi = Signal()
+        phy_vsync_hdmi = Signal()
+        phy_vsync_sync = Signal()
+
+        m.submodules.vsync_ff = FFSynchronizer(
+                i=phy_vsync_hdmi, o=phy_vsync_sync, o_domain="sync")
+
         m.submodules.vlxvid = Instance("lxvid",
             i_clk_sys = ClockSignal("sync"),
             i_clk_hdmi = ClockSignal("hdmi"),
@@ -105,11 +113,15 @@ class LxVideo(Elaboratable):
 
             o_vtg_hcount = vtg_hcount,
             o_vtg_vcount = vtg_vcount,
+            o_phy_vsync  = phy_vsync_hdmi,
+            o_phy_de  = phy_de_hdmi,
 
             i_phy_r = phy_r,
             i_phy_g = phy_g,
             i_phy_b = phy_b,
         )
+
+
 
         # how?
 
@@ -186,16 +198,15 @@ class LxVideo(Elaboratable):
                   (self.fifo.r_level > (self.fifo_depth//2))):
             m.d.hdmi += consume_started.eq(1)
 
-        with m.If(consume_started):
+        with m.If(consume_started & phy_de_hdmi):
             m.d.hdmi += bytecounter.eq(bytecounter+1)
-
-        with m.If(bytecounter == 0):
-            m.d.hdmi += last_word.eq(self.fifo.r_data)
-        with m.Else():
-            m.d.hdmi += last_word.eq(last_word >> 8)
+            m.d.hdmi += self.fifo.r_en.eq(bytecounter == 0),
+            with m.If(bytecounter == 0):
+                m.d.hdmi += last_word.eq(self.fifo.r_data)
+            with m.Else():
+                m.d.hdmi += last_word.eq(last_word >> 8)
 
         m.d.comb += [
-            self.fifo.r_en.eq(bytecounter == 3),
             phy_r.eq(last_word[0:8]),
             phy_g.eq(last_word[0:8]),
             phy_b.eq(last_word[0:8]),
