@@ -52,7 +52,7 @@ from amaranth.lib.cdc import FFSynchronizer
 
 class LxVideo(Elaboratable):
 
-    def __init__(self, fb_base=None, bus_master=None, fifo_depth=256):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=128):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
@@ -224,7 +224,7 @@ class LxVideo(Elaboratable):
 
 class Persistance(Elaboratable):
 
-    def __init__(self, fb_base=None, bus_master=None, fifo_depth=16, holdoff=300):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=32, holdoff=512):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
@@ -371,7 +371,7 @@ class Draw(Elaboratable):
                     bus.cyc.eq(1),
                     bus.we.eq(1),
                     bus.sel.eq(2**(bus.data_width//8)-1),
-                    bus.adr.eq(self.fb_base + (sample_y + 500)*(720//4) + (sample_x+720//8)),
+                    bus.adr.eq(self.fb_base + (sample_y + 550)*(720//4) + (sample_x)),
                     bus.dat_w.eq(0xffffffff),
                 ]
 
