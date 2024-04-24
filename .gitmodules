@@ -1,0 +1,3 @@
+[submodule "examples/hello-rust/eurorack-pmod"]
+	path = examples/hello-rust/eurorack-pmod
+	url = https://github.com/apfelaudio/eurorack-pmod

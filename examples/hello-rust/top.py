@@ -12,13 +12,15 @@ from luna_soc.gateware.soc                       import LunaSoC
 from luna_soc.gateware.csr                       import GpioPeripheral, LedPeripheral
 from luna_soc.gateware.csr.hyperram              import HyperRAMPeripheral
 
-from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal
+from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal, signed
 from amaranth.build                              import *
 from amaranth.hdl.rec                            import Record
 
 from amaranth_soc            import wishbone
 
 from luna.gateware.debug.ila import AsyncSerialILA
+
+import eurorack_pmod
 
 import logging
 import os
@@ -222,7 +224,7 @@ class LxVideo(Elaboratable):
 
 class Persistance(Elaboratable):
 
-    def __init__(self, fb_base=None, bus_master=None, fifo_depth=32, holdoff=256):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=16, holdoff=300):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
@@ -281,9 +283,12 @@ class Persistance(Elaboratable):
                         m.d.sync += dma_addr_in.eq(0)
 
             with m.State('WAIT1'):
-                m.next = 'BURST-OUT'
+                m.d.sync += holdoff_count.eq(holdoff_count + 1)
+                with m.If(holdoff_count == self.holdoff):
+                    m.next = 'BURST-OUT'
 
             with m.State('BURST-OUT'):
+                m.d.sync += holdoff_count.eq(0)
                 m.d.comb += [
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
@@ -313,6 +318,68 @@ class Persistance(Elaboratable):
                     m.next = 'BURST-IN'
 
         return m
+
+class Draw(Elaboratable):
+
+    def __init__(self, fb_base=None, bus_master=None):
+        super().__init__()
+
+        self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
+                                      features={"cti", "bte"}, name="video")
+
+        self.fb_base = fb_base
+        self.fb_hsize = 720
+        self.fb_vsize = 720
+
+        self.sample_x = Signal(signed(16))
+        self.sample_y = Signal(signed(16))
+        self.fs_strobe = Signal(1)
+
+    def elaborate(self, platform) -> Module:
+        m = Module()
+
+        bus = self.bus
+
+        fb_len_words = (self.fb_hsize*self.fb_vsize) // 4
+
+        pmod_pins = platform.request("audio_ffc")
+        m.submodules.pmod0 = pmod0 = eurorack_pmod.EurorackPmod(
+                pmod_pins=pmod_pins,
+                hardware_r33=(os.getenv('PMOD_HW') == 'HW_R33'))
+
+        sample_x = self.sample_x
+        sample_y = self.sample_y
+
+        m.d.comb += self.fs_strobe.eq(pmod0.fs_strobe)
+
+        with m.FSM() as fsm:
+
+            with m.State('LATCH'):
+
+                with m.If(pmod0.fs_strobe):
+                    m.d.sync += [
+                        sample_x.eq(pmod0.cal_in0>>8),
+                        sample_y.eq(pmod0.cal_in1>>6),
+                    ]
+                    m.next = 'WRITE'
+
+            with m.State('WRITE'):
+
+                m.d.comb += [
+                    bus.cti.eq(wishbone.CycleType.CLASSIC),
+                    bus.stb.eq(1),
+                    bus.cyc.eq(1),
+                    bus.we.eq(1),
+                    bus.sel.eq(2**(bus.data_width//8)-1),
+                    bus.adr.eq(self.fb_base + (sample_y + 500)*(720//4) + (sample_x+720//8)),
+                    bus.dat_w.eq(0xffffffff),
+                ]
+
+                with m.If(bus.stb & bus.ack):
+                    m.next = 'LATCH'
+
+        return m
+
 
 # - HelloSoc ------------------------------------------------------------------
 
@@ -352,6 +419,9 @@ class HelloSoc(Elaboratable):
         self.persist = Persistance(fb_base=0x0, bus_master=self.soc.hyperram.bus)
         self.soc.hyperram.add_master(self.persist.bus)
 
+        self.draw = Draw(fb_base=0x0, bus_master=self.soc.hyperram.bus)
+        self.soc.hyperram.add_master(self.draw.bus)
+
     def elaborate(self, platform):
         m = Module()
         m.submodules.soc = self.soc
@@ -371,8 +441,10 @@ class HelloSoc(Elaboratable):
         # video
         m.submodules.video = self.video
         m.submodules.persist = self.persist
+        m.submodules.draw = self.draw
 
         # ila
+        """
         test_signal = Signal(32, reset=0xDEADBEEF)
 
         ila_signals = [
@@ -397,21 +469,9 @@ class HelloSoc(Elaboratable):
             self.persist.dma_addr_in,
             self.persist.dma_addr_out,
 
-            self.soc.hyperram.psram.address,
-            self.soc.hyperram.psram.register_space,
-            self.soc.hyperram.psram.perform_write,
-            self.soc.hyperram.psram.single_page,
-            self.soc.hyperram.psram.start_transfer,
-
-            self.soc.hyperram.psram.final_word,
-            self.soc.hyperram.psram.read_data,
-            self.soc.hyperram.psram.write_data,
-
-            self.soc.hyperram.psram.idle,
-            self.soc.hyperram.psram.read_ready,
-            self.soc.hyperram.psram.write_ready,
-
-            self.soc.hyperram.psram.fsm_state,
+            self.draw.fs_strobe,
+            self.draw.sample_x,
+            self.draw.sample_y,
         ]
 
         for s in ila_signals:
@@ -437,6 +497,7 @@ class HelloSoc(Elaboratable):
         ]
 
         m.submodules.ila = self.ila
+        """
 
         return m
 
