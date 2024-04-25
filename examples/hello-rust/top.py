@@ -77,6 +77,8 @@ class LxVideo(Elaboratable):
         self.last_word   = Signal(32)
         self.consume_started = Signal(1, reset=0)
 
+        self.enable = Signal(1, reset=0)
+
     def elaborate(self, platform) -> Module:
         m = Module()
 
@@ -160,6 +162,9 @@ class LxVideo(Elaboratable):
 
         # sync domain
         with m.FSM() as fsm:
+            with m.State('OFF'):
+                with m.If(self.enable):
+                    m.next = 'BURST'
             with m.State('BURST'):
                 m.d.comb += [
                     bus.stb.eq(1),
@@ -233,7 +238,7 @@ class Persistance(Elaboratable):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
-                                      features={"cti", "bte"}, name="video")
+                                      features={"cti", "bte"}, name="persist")
 
         self.fifo = SyncFIFO(width=32, depth=fifo_depth)
 
@@ -246,6 +251,8 @@ class Persistance(Elaboratable):
 
         self.dma_addr_in = Signal(32, reset=1)
         self.dma_addr_out = Signal(32)
+
+        self.enable = Signal(1, reset=0)
 
     def elaborate(self, platform) -> Module:
         m = Module()
@@ -262,6 +269,9 @@ class Persistance(Elaboratable):
         holdoff_count = Signal(32)
 
         with m.FSM() as fsm:
+            with m.State('OFF'):
+                with m.If(self.enable):
+                    m.next = 'BURST-IN'
 
             with m.State('BURST-IN'):
                 m.d.sync += holdoff_count.eq(0)
@@ -330,7 +340,7 @@ class Draw(Elaboratable):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
-                                      features={"cti", "bte"}, name="video")
+                                      features={"cti", "bte"}, name="draw")
 
         self.fb_base = fb_base
         self.fb_hsize = 720
@@ -339,6 +349,8 @@ class Draw(Elaboratable):
         self.sample_x = Signal(signed(16))
         self.sample_y = Signal(signed(16))
         self.fs_strobe = Signal(1)
+
+        self.enable = Signal(1, reset=0)
 
     def elaborate(self, platform) -> Module:
         m = Module()
@@ -358,6 +370,10 @@ class Draw(Elaboratable):
         m.d.comb += self.fs_strobe.eq(pmod0.fs_strobe)
 
         with m.FSM() as fsm:
+
+            with m.State('OFF'):
+                with m.If(self.enable):
+                    m.next = 'LATCH'
 
             with m.State('LATCH'):
 
@@ -512,7 +528,6 @@ class HelloSoc(Elaboratable):
         self.soc.hyperram = HyperRAMPeripheral(size=16*1024*1024)
         self.soc.add_peripheral(self.soc.hyperram, addr=hyperram_base)
 
-        """
         # ... add memory-mapped framebuffer output that drives hyperram
         self.video = LxVideo(fb_base=0x0, bus_master=self.soc.hyperram.bus)
         self.soc.hyperram.add_master(self.video.bus)
@@ -522,7 +537,6 @@ class HelloSoc(Elaboratable):
 
         self.draw = Draw(fb_base=0x0, bus_master=self.soc.hyperram.bus)
         self.soc.hyperram.add_master(self.draw.bus)
-        """
 
     def elaborate(self, platform):
         m = Module()
@@ -541,14 +555,40 @@ class HelloSoc(Elaboratable):
             m.d.comb += uart_io.tx.oe.eq(~self.soc.uart._phy.tx.rdy),
 
         # video
-        """
         m.submodules.video = self.video
         m.submodules.persist = self.persist
         m.submodules.draw = self.draw
-        """
+
+        on_delay = Signal(32)
+        with m.If(on_delay < 0xFFFF):
+            m.d.sync += on_delay.eq(on_delay+1)
+        with m.Else():
+            m.d.sync += self.video.enable.eq(1)
+            m.d.sync += self.persist.enable.eq(1)
+            m.d.sync += self.draw.enable.eq(1)
 
         # ila
         test_signal = Signal(32, reset=0xDEADBEEF)
+
+        """
+
+
+            self.video.dma_addr,
+            self.video.fifo.w_level,
+            self.video.fifo.w_rdy,
+            self.video.bytecounter,
+            self.video.consume_started,
+            self.video.last_word,
+
+            self.persist.dma_addr_in,
+            self.persist.dma_addr_out,
+
+            self.draw.fs_strobe,
+            self.draw.sample_x,
+            self.draw.sample_y,
+
+
+        """
 
         ila_signals = [
             test_signal,
@@ -562,6 +602,15 @@ class HelloSoc(Elaboratable):
             self.soc.hyperram.shared_bus.ack,
             self.soc.hyperram.shared_bus.cti,
 
+            self.video.bus.cyc,
+            self.video.bus.ack,
+            self.draw.bus.cyc,
+            self.draw.bus.ack,
+            self.persist.bus.cyc,
+            self.persist.bus.ack,
+            self.soc.hyperram.bus.cyc,
+            self.soc.hyperram.bus.ack,
+
             self.soc.hyperram.psram.idle,
             self.soc.hyperram.psram.address,
             self.soc.hyperram.psram.write_data,
@@ -569,24 +618,11 @@ class HelloSoc(Elaboratable):
             self.soc.hyperram.psram.read_ready,
             self.soc.hyperram.psram.write_ready,
             self.soc.hyperram.psram.start_transfer,
+            self.soc.hyperram.psram.final_word,
+            self.soc.hyperram.psram.fsm,
 
+            on_delay,
         ]
-
-        """
-        self.video.dma_addr,
-        self.video.fifo.w_level,
-        self.video.fifo.w_rdy,
-        self.video.bytecounter,
-        self.video.consume_started,
-        self.video.last_word,
-
-        self.persist.dma_addr_in,
-        self.persist.dma_addr_out,
-
-        self.draw.fs_strobe,
-        self.draw.sample_x,
-        self.draw.sample_y,
-        """
 
         for s in ila_signals:
             print(s)
@@ -607,8 +643,7 @@ class HelloSoc(Elaboratable):
 
         m.d.comb += [
             self.ila.trigger.eq(
-                self.soc.hyperram.shared_bus.cyc &
-                self.soc.hyperram.shared_bus.stb
+                on_delay == (0xFFFF - 32)
             ),
             platform.request("pmod_uart").tx.o.eq(self.ila.tx),
         ]

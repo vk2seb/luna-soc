@@ -398,6 +398,8 @@ class HyperRAMDQSInterface(Elaboratable):
 
         self.clk = Signal()
 
+        self.fsm = Signal(8)
+
 
     def elaborate(self, platform):
         m = Module()
@@ -579,7 +581,7 @@ class HyperRAMDQSInterface(Elaboratable):
                 # TODO: implement recovery
                 m.next = 'IDLE'
 
-
+        m.d.comb += self.fsm.eq(fsm.state)
 
         return m
 
