@@ -11,7 +11,7 @@ from luna_soc.gateware.cpu.vexriscv              import VexRiscv
 from luna_soc.gateware.soc                       import LunaSoC
 from luna_soc.gateware.csr                       import GpioPeripheral, LedPeripheral
 
-from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal, signed
+from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal, signed, unsigned, Const
 from amaranth.build                              import *
 from amaranth.hdl.rec                            import Record
 
@@ -369,6 +369,8 @@ class Draw(Elaboratable):
 
         m.d.comb += self.fs_strobe.eq(pmod0.fs_strobe)
 
+        px_read = Signal(32)
+
         with m.FSM() as fsm:
 
             with m.State('OFF'):
@@ -379,9 +381,24 @@ class Draw(Elaboratable):
 
                 with m.If(pmod0.fs_strobe):
                     m.d.sync += [
-                        sample_x.eq(pmod0.cal_in0>>8),
+                        sample_x.eq(pmod0.cal_in0>>6),
                         sample_y.eq(pmod0.cal_in1>>6),
                     ]
+                    m.next = 'READ'
+
+            with m.State('READ'):
+
+                m.d.comb += [
+                    bus.cti.eq(wishbone.CycleType.CLASSIC),
+                    bus.stb.eq(1),
+                    bus.cyc.eq(1),
+                    bus.we.eq(0),
+                    bus.sel.eq(0xf),
+                    bus.adr.eq(self.fb_base + (sample_y + 550)*(720//4) + (sample_x>>2)),
+                ]
+
+                with m.If(bus.stb & bus.ack):
+                    m.d.sync += px_read.eq(bus.dat_r)
                     m.next = 'WRITE'
 
             with m.State('WRITE'):
@@ -391,9 +408,9 @@ class Draw(Elaboratable):
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
                     bus.we.eq(1),
-                    bus.sel.eq(2**(bus.data_width//8)-1),
-                    bus.adr.eq(self.fb_base + (sample_y + 550)*(720//4) + (sample_x)),
-                    bus.dat_w.eq(0xffffffff),
+                    bus.sel.eq(0xf),
+                    bus.adr.eq(self.fb_base + (sample_y + 550)*(720//4) + (sample_x>>2)),
+                    bus.dat_w.eq(px_read | (Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))),
                 ]
 
                 with m.If(bus.stb & bus.ack):
@@ -482,11 +499,14 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
                     m.d.sync += [
                         psram.start_transfer.eq(1),
                         psram.write_data.eq(self.shared_bus.dat_w),
+                        psram.write_mask.eq(~self.shared_bus.sel),
                         psram.address.eq(self.shared_bus.adr << 1),
                     ]
                     m.next = 'GO'
             with m.State('GO'):
                 m.d.sync += psram.start_transfer.eq(0),
+                with m.If(self.shared_bus.cti != wishbone.CycleType.INCR_BURST):
+                    m.d.comb += psram.final_word.eq(1)
                 with m.If(psram.read_ready | psram.write_ready):
                     m.d.comb += self.shared_bus.dat_r.eq(psram.read_data),
                     m.d.comb += self.shared_bus.ack.eq(1)
@@ -606,6 +626,7 @@ class HelloSoc(Elaboratable):
             self.video.bus.ack,
             self.draw.bus.cyc,
             self.draw.bus.ack,
+            self.draw.bus.sel,
             self.persist.bus.cyc,
             self.persist.bus.ack,
             self.soc.hyperram.bus.cyc,
@@ -617,6 +638,7 @@ class HelloSoc(Elaboratable):
             self.soc.hyperram.psram.read_data,
             self.soc.hyperram.psram.read_ready,
             self.soc.hyperram.psram.write_ready,
+            self.soc.hyperram.psram.write_mask,
             self.soc.hyperram.psram.start_transfer,
             self.soc.hyperram.psram.final_word,
             self.soc.hyperram.psram.fsm,
@@ -643,7 +665,7 @@ class HelloSoc(Elaboratable):
 
         m.d.comb += [
             self.ila.trigger.eq(
-                on_delay == (0xFFFF - 32)
+                self.draw.bus.ack
             ),
             platform.request("pmod_uart").tx.o.eq(self.ila.tx),
         ]
