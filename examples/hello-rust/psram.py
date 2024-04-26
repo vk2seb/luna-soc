@@ -581,6 +581,7 @@ class HyperRAMDQSInterface(Elaboratable):
             with m.State('RECOVERY'):
                 with m.If(~is_read):
                     m.d.sync += [
+                        self.phy.dq.e.eq(1),
                         self.phy.rwds.e.eq(~is_register),
                         self.phy.rwds.o.eq(0xf),
                     ]

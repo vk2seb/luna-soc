@@ -200,9 +200,8 @@ class LxVideo(Elaboratable):
 
             with m.State('VSYNC'):
                 # drain HDMI side. We only want to drain once.
-                with m.If(self.fifo.w_level != 0):
-                    m.d.comb += drain_fifo.eq(1)
-                with m.Else():
+                m.d.comb += drain_fifo.eq(1)
+                with m.If(self.fifo.w_level == 0):
                     m.d.sync += dma_addr.eq(0)
                     m.d.sync += drained.eq(1)
                     m.next = 'BURST'
@@ -214,10 +213,10 @@ class LxVideo(Elaboratable):
 
         with m.If(drain_fifo_hdmi):
             m.d.hdmi += bytecounter.eq(0)
-            m.d.hdmi += self.fifo.r_en.eq(1),
-        with m.Elif(phy_de_hdmi):
+            m.d.comb += self.fifo.r_en.eq(1),
+        with m.Elif(phy_de_hdmi & self.fifo.r_rdy):
+            m.d.comb += self.fifo.r_en.eq(bytecounter == 0),
             m.d.hdmi += bytecounter.eq(bytecounter+1)
-            m.d.hdmi += self.fifo.r_en.eq(bytecounter == 0),
             with m.If(bytecounter == 0):
                 m.d.hdmi += last_word.eq(self.fifo.r_data)
             with m.Else():
@@ -362,7 +361,7 @@ class Draw(Elaboratable):
         pmod_pins = platform.request("audio_ffc")
         m.submodules.pmod0 = pmod0 = eurorack_pmod.EurorackPmod(
                 pmod_pins=pmod_pins,
-                hardware_r33=(os.getenv('PMOD_HW') == 'HW_R33'))
+                hardware_r33=True)
 
         sample_x = self.sample_x
         sample_y = self.sample_y
@@ -394,7 +393,7 @@ class Draw(Elaboratable):
                     bus.cyc.eq(1),
                     bus.we.eq(0),
                     bus.sel.eq(0xf),
-                    bus.adr.eq(self.fb_base + (sample_y + 550)*(720//4) + (sample_x>>2)),
+                    bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x>>2))),
                 ]
 
                 with m.If(bus.stb & bus.ack):
@@ -409,7 +408,7 @@ class Draw(Elaboratable):
                     bus.cyc.eq(1),
                     bus.we.eq(1),
                     bus.sel.eq(0xf),
-                    bus.adr.eq(self.fb_base + (sample_y + 550)*(720//4) + (sample_x>>2)),
+                    bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x>>2))),
                     bus.dat_w.eq(px_read | (Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))),
                 ]
 
