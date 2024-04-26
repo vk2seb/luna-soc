@@ -579,7 +579,11 @@ class HyperRAMDQSInterface(Elaboratable):
 
             # RECOVERY state: wait for the required period of time before a new transaction
             with m.State('RECOVERY'):
-                m.d.sync += self.phy.clk_en .eq(0)
+                with m.If(~is_read):
+                    m.d.sync += [
+                        self.phy.rwds.e.eq(~is_register),
+                        self.phy.rwds.o.eq(0xf),
+                    ]
 
                 # TODO: implement recovery
                 m.next = 'IDLE'
