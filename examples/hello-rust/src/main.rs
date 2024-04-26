@@ -48,10 +48,10 @@ fn main() -> ! {
 
         let start = timer.counter();
 
-        //const n: isize = 16;
-        const n: isize = 1024*1024*4;
+        const n: isize = 16;
+        //const n: isize = 1024*1024*4;
 
-        for i in 0..n {
+        for i in (0..n).rev() {
             hram_ptr.offset(i).write_volatile((0xDEAD0000u32 | i as u32));
         }
 
@@ -59,11 +59,12 @@ fn main() -> ! {
 
         for i in 0..n {
             let got = hram_ptr.offset(i).read_volatile();
-            if got != (0xDEAD0000u32 | i as u32) {
+            //if got != (0xDEAD0000u32 | i as u32) {
                 info!("hyperram FL @ {:#x}, got {:#x}", i, got);
-            }
+            //}
         }
 
+        /*
         let endread = timer.counter();
 
         for i in 0..n {
@@ -88,6 +89,7 @@ fn main() -> ! {
         info!("write speed {} KByte/sec", ((sysclk as u64) * (16*1024) as u64) / write_ticks as u64);
 
         info!("read speed {} KByte/sec", ((sysclk as u64) * (16*1024 as u64)) / (read_ticks as u64));
+        */
 
     }
 

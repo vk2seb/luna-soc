@@ -219,17 +219,17 @@ class TiliquaDomainGenerator(Elaboratable):
                 p_OUTDIVIDER_MUXC="DIVC",
                 p_OUTDIVIDER_MUXD="DIVD",
 
-                p_CLKI_DIV = 5,
+                p_CLKI_DIV = 13,
                 p_CLKOP_ENABLE = "ENABLED",
-                p_CLKOP_DIV = 32,
+                p_CLKOP_DIV = 71,
                 p_CLKOP_CPHASE = 9,
                 p_CLKOP_FPHASE = 0,
                 p_CLKOS_ENABLE = "ENABLED",
-                p_CLKOS_DIV = 50,
+                p_CLKOS_DIV = 16,
                 p_CLKOS_CPHASE = 0,
                 p_CLKOS_FPHASE = 0,
                 p_FEEDBK_PATH = "CLKOP",
-                p_CLKFB_DIV = 2,
+                p_CLKFB_DIV = 3,
 
                 # Clock in.
                 i_CLKI=clk48,

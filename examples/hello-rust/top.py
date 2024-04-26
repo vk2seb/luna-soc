@@ -351,6 +351,10 @@ class Draw(Elaboratable):
 
         self.enable = Signal(1, reset=0)
 
+        self.px_read = Signal(32)
+        self.px_sum = Signal(16)
+
+
     def elaborate(self, platform) -> Module:
         m = Module()
 
@@ -368,7 +372,10 @@ class Draw(Elaboratable):
 
         m.d.comb += self.fs_strobe.eq(pmod0.fs_strobe)
 
-        px_read = Signal(32)
+        px_read = self.px_read
+        px_sum = self.px_sum
+
+        inc = 64
 
         with m.FSM() as fsm:
 
@@ -382,6 +389,8 @@ class Draw(Elaboratable):
                     m.d.sync += [
                         sample_x.eq(pmod0.cal_in0>>6),
                         sample_y.eq(pmod0.cal_in1>>6),
+                        bus.sel.eq(0xf),
+                        bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x>>2))),
                     ]
                     m.next = 'READ'
 
@@ -392,12 +401,11 @@ class Draw(Elaboratable):
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
                     bus.we.eq(0),
-                    bus.sel.eq(0xf),
-                    bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x>>2))),
                 ]
 
                 with m.If(bus.stb & bus.ack):
                     m.d.sync += px_read.eq(bus.dat_r)
+                    m.d.sync += px_sum.eq(((bus.dat_r >> (sample_x[0:2]*8)) & 0xff))
                     m.next = 'WRITE'
 
             with m.State('WRITE'):
@@ -407,10 +415,15 @@ class Draw(Elaboratable):
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
                     bus.we.eq(1),
-                    bus.sel.eq(0xf),
-                    bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x>>2))),
-                    bus.dat_w.eq(px_read | (Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))),
                 ]
+
+                with m.If(px_sum + inc >= 0xFF):
+                    m.d.comb += bus.dat_w.eq(px_read | (Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))),
+                with m.Else():
+                    m.d.comb += bus.dat_w.eq(
+                        (px_read & ~(Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))) |
+                        ((px_sum + inc) << (sample_x[0:2]*8))
+                         )
 
                 with m.If(bus.stb & bus.ack):
                     m.next = 'LATCH'
@@ -498,7 +511,7 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
                     m.d.sync += [
                         psram.start_transfer.eq(1),
                         psram.write_data.eq(self.shared_bus.dat_w),
-                        psram.write_mask.eq(~self.shared_bus.sel),
+                        psram.write_mask.eq(0),
                         psram.address.eq(self.shared_bus.adr << 1),
                     ]
                     m.next = 'GO'
@@ -630,6 +643,9 @@ class HelloSoc(Elaboratable):
             self.persist.bus.ack,
             self.soc.hyperram.bus.cyc,
             self.soc.hyperram.bus.ack,
+
+            self.draw.px_read,
+            self.draw.px_sum,
 
             self.soc.hyperram.psram.idle,
             self.soc.hyperram.psram.address,
