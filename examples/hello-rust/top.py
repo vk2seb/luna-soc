@@ -377,6 +377,8 @@ class Draw(Elaboratable):
 
         inc = 64
 
+        cnt = Signal(4)
+
         with m.FSM() as fsm:
 
             with m.State('OFF'):
@@ -387,10 +389,11 @@ class Draw(Elaboratable):
 
                 with m.If(pmod0.fs_strobe):
                     m.d.sync += [
-                        sample_x.eq(pmod0.cal_in0>>6),
-                        sample_y.eq(pmod0.cal_in1>>6),
+                        cnt.eq(cnt+1),
+                        sample_x.eq(11),
+                        sample_y.eq(3),
                         bus.sel.eq(0xf),
-                        bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x>>2))),
+                        bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x))),
                     ]
                     m.next = 'READ'
 
@@ -406,7 +409,16 @@ class Draw(Elaboratable):
                 with m.If(bus.stb & bus.ack):
                     m.d.sync += px_read.eq(bus.dat_r)
                     m.d.sync += px_sum.eq(((bus.dat_r >> (sample_x[0:2]*8)) & 0xff))
-                    m.next = 'WRITE'
+                    m.next = 'WAIT'
+
+            with m.State('WAIT'):
+                m.next = 'WAIT2'
+
+            with m.State('WAIT2'):
+                m.next = 'WAIT3'
+
+            with m.State('WAIT3'):
+                m.next = 'WRITE'
 
             with m.State('WRITE'):
 
@@ -417,6 +429,7 @@ class Draw(Elaboratable):
                     bus.we.eq(1),
                 ]
 
+                """
                 with m.If(px_sum + inc >= 0xFF):
                     m.d.comb += bus.dat_w.eq(px_read | (Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))),
                 with m.Else():
@@ -424,6 +437,9 @@ class Draw(Elaboratable):
                         (px_read & ~(Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))) |
                         ((px_sum + inc) << (sample_x[0:2]*8))
                          )
+                """
+
+                m.d.comb += bus.dat_w.eq(0xFFFFFFFF),
 
                 with m.If(bus.stb & bus.ack):
                     m.next = 'LATCH'
@@ -511,7 +527,6 @@ class HyperRAMPeripheral(Peripheral, Elaboratable):
                     m.d.sync += [
                         psram.start_transfer.eq(1),
                         psram.write_data.eq(self.shared_bus.dat_w),
-                        psram.write_mask.eq(0),
                         psram.address.eq(self.shared_bus.adr << 1),
                     ]
                     m.next = 'GO'
@@ -619,12 +634,6 @@ class HelloSoc(Elaboratable):
             self.draw.sample_x,
             self.draw.sample_y,
 
-
-        """
-
-        ila_signals = [
-            test_signal,
-
             self.soc.hyperram.shared_bus.cyc,
             self.soc.hyperram.shared_bus.stb,
             self.soc.hyperram.shared_bus.adr,
@@ -636,16 +645,24 @@ class HelloSoc(Elaboratable):
 
             self.video.bus.cyc,
             self.video.bus.ack,
+            self.persist.bus.cyc,
+            self.persist.bus.ack,
+
+        """
+
+        ila_signals = [
+            test_signal,
+
             self.draw.bus.cyc,
             self.draw.bus.ack,
             self.draw.bus.sel,
-            self.persist.bus.cyc,
-            self.persist.bus.ack,
             self.soc.hyperram.bus.cyc,
             self.soc.hyperram.bus.ack,
 
             self.draw.px_read,
             self.draw.px_sum,
+            self.draw.sample_x,
+            self.draw.sample_y,
 
             self.soc.hyperram.psram.idle,
             self.soc.hyperram.psram.address,
@@ -653,10 +670,21 @@ class HelloSoc(Elaboratable):
             self.soc.hyperram.psram.read_data,
             self.soc.hyperram.psram.read_ready,
             self.soc.hyperram.psram.write_ready,
-            self.soc.hyperram.psram.write_mask,
             self.soc.hyperram.psram.start_transfer,
             self.soc.hyperram.psram.final_word,
             self.soc.hyperram.psram.fsm,
+
+            self.soc.hyperram.psram.phy.clk_en,
+            self.soc.hyperram.psram.phy.dq.i,
+            self.soc.hyperram.psram.phy.dq.o,
+            self.soc.hyperram.psram.phy.dq.e,
+            self.soc.hyperram.psram.phy.rwds.i,
+            self.soc.hyperram.psram.phy.rwds.o,
+            self.soc.hyperram.psram.phy.cs,
+            self.soc.hyperram.psram.phy.reset,
+            self.soc.hyperram.psram.phy.read,
+            self.soc.hyperram.psram.phy.datavalid,
+            self.soc.hyperram.psram.phy.burstdet,
 
             on_delay,
         ]
