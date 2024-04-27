@@ -233,7 +233,7 @@ class LxVideo(Elaboratable):
 
 class Persistance(Elaboratable):
 
-    def __init__(self, fb_base=None, bus_master=None, fifo_depth=32, holdoff=512):
+    def __init__(self, fb_base=None, bus_master=None, fifo_depth=128, holdoff=1024):
         super().__init__()
 
         self.bus = wishbone.Interface(addr_width=bus_master.addr_width, data_width=32, granularity=8,
@@ -377,25 +377,28 @@ class Draw(Elaboratable):
 
         inc = 64
 
-        cnt = Signal(4)
-
         with m.FSM() as fsm:
 
             with m.State('OFF'):
                 with m.If(self.enable):
-                    m.next = 'LATCH'
+                    m.next = 'LATCH0'
 
-            with m.State('LATCH'):
+            with m.State('LATCH0'):
 
                 with m.If(pmod0.fs_strobe):
                     m.d.sync += [
-                        cnt.eq(cnt+1),
-                        sample_x.eq(11),
-                        sample_y.eq(3),
-                        bus.sel.eq(0xf),
-                        bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x))),
+                        sample_x.eq(pmod0.cal_in0>>6),
+                        sample_y.eq(pmod0.cal_in1>>6),
                     ]
-                    m.next = 'READ'
+
+                    m.next = 'LATCH1'
+
+            with m.State('LATCH1'):
+                m.d.sync += [
+                    bus.sel.eq(0xf),
+                    bus.adr.eq(self.fb_base + (sample_y + 360)*(720//4) + (90 + (sample_x >> 2))),
+                ]
+                m.next = 'READ'
 
             with m.State('READ'):
 
@@ -429,7 +432,6 @@ class Draw(Elaboratable):
                     bus.we.eq(1),
                 ]
 
-                """
                 with m.If(px_sum + inc >= 0xFF):
                     m.d.comb += bus.dat_w.eq(px_read | (Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))),
                 with m.Else():
@@ -437,12 +439,13 @@ class Draw(Elaboratable):
                         (px_read & ~(Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))) |
                         ((px_sum + inc) << (sample_x[0:2]*8))
                          )
+
+                """
+                m.d.comb += bus.dat_w.eq(0xFFFFFFFF),
                 """
 
-                m.d.comb += bus.dat_w.eq(0xFFFFFFFF),
-
                 with m.If(bus.stb & bus.ack):
-                    m.next = 'LATCH'
+                    m.next = 'LATCH0'
 
         return m
 
