@@ -347,6 +347,7 @@ class Draw(Elaboratable):
 
         self.sample_x = Signal(signed(16))
         self.sample_y = Signal(signed(16))
+        self.sample_z = Signal(signed(16))
         self.fs_strobe = Signal(1)
 
         self.enable = Signal(1, reset=0)
@@ -369,6 +370,7 @@ class Draw(Elaboratable):
 
         sample_x = self.sample_x
         sample_y = self.sample_y
+        sample_z = self.sample_z
 
         m.d.comb += self.fs_strobe.eq(pmod0.fs_strobe)
 
@@ -389,6 +391,7 @@ class Draw(Elaboratable):
                     m.d.sync += [
                         sample_x.eq(pmod0.cal_in0>>6),
                         sample_y.eq(pmod0.cal_in1>>6),
+                        sample_z.eq(pmod0.cal_in2>>8),
                     ]
 
                     m.next = 'LATCH1'
@@ -432,12 +435,12 @@ class Draw(Elaboratable):
                     bus.we.eq(1),
                 ]
 
-                with m.If(px_sum + inc >= 0xFF):
+                with m.If(px_sum + sample_z >= 0xFF):
                     m.d.comb += bus.dat_w.eq(px_read | (Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))),
                 with m.Else():
                     m.d.comb += bus.dat_w.eq(
                         (px_read & ~(Const(0xFF, unsigned(32)) << (sample_x[0:2]*8))) |
-                        ((px_sum + inc) << (sample_x[0:2]*8))
+                        ((px_sum + sample_z) << (sample_x[0:2]*8))
                          )
 
                 """
