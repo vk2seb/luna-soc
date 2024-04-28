@@ -519,8 +519,12 @@ class Draw2(Elaboratable):
 
             with m.State('READ'):
 
+                with m.If(pcache_ix[0:2] == 3):
+                    m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                with m.Else():
+                    m.d.comb += bus.cti.eq(wishbone.CycleType.INCR_BURST)
+
                 m.d.comb += [
-                    bus.cti.eq(wishbone.CycleType.CLASSIC),
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
                     bus.we.eq(0),
@@ -595,8 +599,12 @@ class Draw2(Elaboratable):
 
             with m.State('WRITE'):
 
+                with m.If(pcache_ix[0:2] == 3):
+                    m.d.comb += bus.cti.eq(wishbone.CycleType.END_OF_BURST)
+                with m.Else():
+                    m.d.comb += bus.cti.eq(wishbone.CycleType.INCR_BURST)
+
                 m.d.comb += [
-                    bus.cti.eq(wishbone.CycleType.CLASSIC),
                     bus.stb.eq(1),
                     bus.cyc.eq(1),
                     bus.we.eq(1),
@@ -973,7 +981,7 @@ if __name__ == "__main__":
     print("waiting for ILA")
 
     from luna.gateware.debug.ila import AsyncSerialILAFrontend
-    frontend = AsyncSerialILAFrontend("/dev/ttyUSB0", baudrate=1000000, ila=design.ila)
+    frontend = AsyncSerialILAFrontend("/dev/ttyUSB1", baudrate=1000000, ila=design.ila)
     frontend.emit_vcd("out.vcd")
 
     # TODO
