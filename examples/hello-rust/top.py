@@ -11,7 +11,7 @@ from luna_soc.gateware.cpu.vexriscv              import VexRiscv
 from luna_soc.gateware.soc                       import LunaSoC
 from luna_soc.gateware.csr                       import GpioPeripheral, LedPeripheral
 
-from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal, signed, unsigned, Const
+from amaranth                                    import Elaboratable, Module, Cat, Instance, ClockSignal, ResetSignal, Signal, signed, unsigned, Const, Memory
 from amaranth.build                              import *
 from amaranth.hdl.rec                            import Record
 
@@ -449,6 +449,178 @@ class Draw(Elaboratable):
 
         return m
 
+class Draw2(Elaboratable):
+
+    def __init__(self, bus_master_width=None, fb_sz_x=720, fb_sz_y=720):
+        super().__init__()
+
+        self.bus = wishbone.Interface(addr_width=bus_master_width, data_width=32, granularity=8,
+                                      features={"cti", "bte"})
+
+        self.fb_sz_x = fb_sz_x
+        self.fb_sz_y = fb_sz_y
+
+        self.sample_x = Signal(signed(16))
+        self.sample_y = Signal(signed(16))
+        self.fs_strobe = Signal(1)
+
+        self.enable = Signal(1, reset=0)
+
+        pcache_depth = 16
+        self.pcache = Memory(
+            width=32, depth=pcache_depth, init=[])
+
+        self.wr_port = self.pcache.write_port()
+        self.rd_port = self.pcache.read_port(transparent=False)
+
+
+    def elaborate(self, platform) -> Module:
+        m = Module()
+
+        bus = self.bus
+
+        pmod_pins = platform.request("audio_ffc")
+        m.submodules.pmod0 = pmod0 = eurorack_pmod.EurorackPmod(
+                pmod_pins=pmod_pins,
+                hardware_r33=True)
+
+        sample_x = self.sample_x
+        sample_y = self.sample_y
+
+        m.d.comb += self.fs_strobe.eq(pmod0.fs_strobe)
+
+        pcache_depth = 16
+        m.submodules.pcache = pcache = self.pcache
+
+        pcache_ix = Signal(4)
+
+        wr_port = self.wr_port
+        rd_port = self.rd_port
+
+        inc = 64
+
+        with m.FSM() as fsm:
+
+            with m.State('OFF'):
+                with m.If(self.enable):
+                    m.next = 'LATCH0'
+
+            with m.State('LATCH0'):
+
+                with m.If(pmod0.fs_strobe):
+
+                    m.d.sync += [
+                        sample_x.eq(pmod0.cal_in0>>6),
+                        sample_y.eq(pmod0.cal_in1>>6),
+                        pcache_ix.eq(0)
+                    ]
+
+                    m.next = 'READ'
+
+            with m.State('READ'):
+
+                m.d.comb += [
+                    bus.cti.eq(wishbone.CycleType.CLASSIC),
+                    bus.stb.eq(1),
+                    bus.cyc.eq(1),
+                    bus.we.eq(0),
+                    bus.sel.eq(0xf),
+                    bus.adr.eq(
+                        (sample_y + 360 + pcache_ix[2:])*(720//4) +
+                        (90 + (sample_x >> 2) + pcache_ix[0:2])),
+                ]
+
+                with m.If(bus.stb & bus.ack):
+                    m.d.sync += [
+                        wr_port.en.eq(1),
+                        wr_port.data.eq(bus.dat_r),
+                        wr_port.addr.eq(pcache_ix),
+                    ]
+                    with m.If(pcache_ix != pcache_depth - 1):
+                        m.d.sync += pcache_ix.eq(pcache_ix+1)
+                    with m.Elif(pcache_ix == pcache_depth - 1):
+                        m.d.sync += pcache_ix.eq(0)
+                        m.d.sync += rd_port.en.eq(0)
+                        m.next = 'DRAW'
+                with m.Else():
+                    m.d.sync += wr_port.en.eq(0)
+
+            with m.State('DRAW'):
+
+                reg = Signal(32)
+                en_reg = Signal()
+
+                m.d.sync += [
+                    rd_port.en.eq(1),
+                    en_reg.eq(rd_port.en),
+                    wr_port.en.eq(en_reg),
+                    #wr_port.data.eq(rd_port.data + 32),
+                    rd_port.addr.eq(pcache_ix),
+                    reg.eq(rd_port.addr),
+                    wr_port.addr.eq(reg),
+                ]
+
+                shr = Signal(64)
+
+                imp = Signal(2)
+
+                with m.If(pcache_ix[2:] == 1):
+                    m.d.comb += shr.eq(0x000000071F070000)
+                with m.Elif((pcache_ix[2:] == 0) |
+                            (pcache_ix[2:] == 2)):
+                    m.d.comb += shr.eq(0x0000000107010000)
+                with m.Else():
+                    m.d.comb += shr.eq(0)
+
+                with m.If((pcache_ix[0:2] == 2)):
+                    m.d.sync += wr_port.data.eq((((rd_port.data)) | (shr << sample_x[0:2]*8)[16:64-16]) << 1)
+                with m.Elif((pcache_ix[0:2] == 1)):
+                    m.d.sync += wr_port.data.eq((((rd_port.data)) | Cat((shr << sample_x[0:2]*8)[0:16],
+                                                                                      Const(16, 0))) << 1)
+                with m.Elif((pcache_ix[0:2] == 3)):
+                    m.d.sync += wr_port.data.eq(((rd_port.data)) | Cat(Const(16, 0),
+                                                                                     (shr << sample_x[0:2]*8)[64-16:]) << 1)
+                with m.Else():
+                    m.d.sync += wr_port.data.eq(rd_port.data)
+
+                with m.If(pcache_ix != pcache_depth - 1):
+                    m.d.sync += pcache_ix.eq(pcache_ix+1)
+
+                with m.If((wr_port.addr == rd_port.addr) &
+                          (pcache_ix == pcache_depth - 1)):
+                    m.d.sync += pcache_ix.eq(0)
+                    m.d.sync += en_reg.eq(0)
+                    m.d.sync += reg.eq(0)
+                    m.next = 'WRITE'
+
+            with m.State('WRITE'):
+
+                m.d.comb += [
+                    bus.cti.eq(wishbone.CycleType.CLASSIC),
+                    bus.stb.eq(1),
+                    bus.cyc.eq(1),
+                    bus.we.eq(1),
+                    bus.sel.eq(0xf),
+                    bus.adr.eq(
+                        (sample_y + 360 + pcache_ix[2:])*(720//4) +
+                        (90 + (sample_x >> 2) + pcache_ix[0:2])),
+                ]
+
+                m.d.sync += [
+                    rd_port.en.eq(1),
+                    rd_port.addr.eq(pcache_ix),
+                    bus.dat_w.eq(rd_port.data),
+                ]
+
+                with m.If(bus.stb & bus.ack):
+                    with m.If(pcache_ix != pcache_depth - 1):
+                        m.d.sync += pcache_ix.eq(pcache_ix+1)
+                    with m.Else():
+                        m.d.sync += pcache_ix.eq(0)
+                        m.next = 'LATCH0'
+
+        return m
+
 class HyperRAMPeripheral(Peripheral, Elaboratable):
     """HyperRAM peripheral.
 
@@ -585,7 +757,8 @@ class HelloSoc(Elaboratable):
         self.persist = Persistance(fb_base=0x0, bus_master=self.soc.hyperram.bus)
         self.soc.hyperram.add_master(self.persist.bus)
 
-        self.draw = Draw(fb_base=0x0, bus_master=self.soc.hyperram.bus)
+        #self.draw = Draw(fb_base=0x0, bus_master=self.soc.hyperram.bus)
+        self.draw = Draw2(bus_master_width=self.soc.hyperram.bus.addr_width)
         self.soc.hyperram.add_master(self.draw.bus)
 
     def elaborate(self, platform):
@@ -651,32 +824,6 @@ class HelloSoc(Elaboratable):
             self.persist.bus.cyc,
             self.persist.bus.ack,
 
-        """
-
-        ila_signals = [
-            test_signal,
-
-            self.draw.bus.cyc,
-            self.draw.bus.ack,
-            self.draw.bus.sel,
-            self.soc.hyperram.bus.cyc,
-            self.soc.hyperram.bus.ack,
-
-            self.draw.px_read,
-            self.draw.px_sum,
-            self.draw.sample_x,
-            self.draw.sample_y,
-
-            self.soc.hyperram.psram.idle,
-            self.soc.hyperram.psram.address,
-            self.soc.hyperram.psram.write_data,
-            self.soc.hyperram.psram.read_data,
-            self.soc.hyperram.psram.read_ready,
-            self.soc.hyperram.psram.write_ready,
-            self.soc.hyperram.psram.start_transfer,
-            self.soc.hyperram.psram.final_word,
-            self.soc.hyperram.psram.fsm,
-
             self.soc.hyperram.psram.phy.clk_en,
             self.soc.hyperram.psram.phy.dq.i,
             self.soc.hyperram.psram.phy.dq.o,
@@ -688,6 +835,33 @@ class HelloSoc(Elaboratable):
             self.soc.hyperram.psram.phy.read,
             self.soc.hyperram.psram.phy.datavalid,
             self.soc.hyperram.psram.phy.burstdet,
+
+
+        """
+
+        ila_signals = [
+            test_signal,
+
+            self.draw.bus.cyc,
+            self.draw.bus.ack,
+            self.draw.bus.sel,
+            self.soc.hyperram.bus.cyc,
+            self.soc.hyperram.bus.ack,
+
+            self.draw.sample_x,
+            self.draw.sample_y,
+            self.draw.wr_port.addr,
+            self.draw.rd_port.addr,
+
+            self.soc.hyperram.psram.idle,
+            self.soc.hyperram.psram.address,
+            self.soc.hyperram.psram.write_data,
+            self.soc.hyperram.psram.read_data,
+            self.soc.hyperram.psram.read_ready,
+            self.soc.hyperram.psram.write_ready,
+            self.soc.hyperram.psram.start_transfer,
+            self.soc.hyperram.psram.final_word,
+            self.soc.hyperram.psram.fsm,
 
             on_delay,
         ]
