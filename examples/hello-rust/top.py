@@ -105,10 +105,10 @@ class HelloSoc(wiring.Component):
         reset_addr = introspect.reset_addr(self)
 
         this_path = os.path.dirname(os.path.realpath(__file__))
-        firmware_path = os.path.join(this_path, "firmware")
+        firmware_path = os.path.join(this_path)
 
         logging.info("Generating Rust linker region info script for SoC")
-        with open(os.path.join(firmware_path, "../memory.x"), "w") as f:
+        with open(os.path.join(firmware_path, "memory.x"), "w") as f:
             rust.LinkerScript(memory_map, reset_addr).generate(file=f)
 
         logging.info("Generating SVD description for SoC")
