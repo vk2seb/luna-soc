@@ -11,12 +11,6 @@ use firmware::{pac, hal};
 use hal::Serial0;
 use hal::Timer0;
 
-#[riscv_rt::pre_init]
-unsafe fn pre_main() {
-    pac::cpu::vexriscv::flush_icache();
-    pac::cpu::vexriscv::flush_dcache();
-}
-
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(panic_info: &PanicInfo) -> ! {

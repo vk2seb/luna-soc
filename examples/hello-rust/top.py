@@ -38,8 +38,10 @@ class HelloSoc(wiring.Component):
         self.domain = domain
 
         # configuration
-        blockram_base = 0x00000000
-        blockram_size = 32768
+        rom_base = 0x00000000
+        rom_size = 8192
+        ram_base = 0x10000000
+        ram_size = 32768
 
         csr_base             = 0xf0000000
         leds_base            = 0x00000000
@@ -48,7 +50,7 @@ class HelloSoc(wiring.Component):
 
         # cpu
         self.cpu = VexRiscv(
-            reset_addr=blockram_base,
+            reset_addr=rom_base,
             variant="cynthion"
         )
 
@@ -69,9 +71,13 @@ class HelloSoc(wiring.Component):
             features={"cti", "bte", "err"}
         )
 
-        # blockram
-        self.blockram = blockram.Peripheral(size=blockram_size)
-        self.wb_decoder.add(self.blockram.bus, addr=blockram_base, name="blockram")
+        # rom
+        self.rom = blockram.Peripheral(size=rom_size)
+        self.wb_decoder.add(self.rom.bus, addr=rom_base, name="rom")
+
+        # ram
+        self.ram = blockram.Peripheral(size=ram_size)
+        self.wb_decoder.add(self.ram.bus, addr=ram_base, name="blockram")
 
         # csr decoder
         self.csr_decoder = csr.Decoder(addr_width=28, data_width=8)
@@ -132,13 +138,13 @@ class HelloSoc(wiring.Component):
         if not firmware:
             logging.error(f"Firmware file '{filename}' could not be located.")
             exit(-1)
-        self.blockram.init = firmware
+        self.rom.init = firmware
 
 
     def elaborate(self, platform):
         m = Module()
 
-        assert self.blockram.init
+        assert self.rom.init
 
         # bus
         m.submodules += [self.wb_arbiter, self.wb_decoder]
@@ -153,8 +159,11 @@ class HelloSoc(wiring.Component):
         m.submodules += self.interrupt_controller
         m.d.comb += self.cpu.irq_external.eq(self.interrupt_controller.pending)
 
-        # blockram
-        m.submodules += self.blockram
+        # rom
+        m.submodules += self.rom
+
+        # ram
+        m.submodules += self.ram
 
         # csr decoder
         m.submodules += self.csr_decoder
