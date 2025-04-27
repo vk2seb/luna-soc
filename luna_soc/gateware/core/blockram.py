@@ -84,44 +84,55 @@ class Peripheral(wiring.Component):
         m = Module()
         m.submodules.mem = self._mem
 
-        incr = Signal.like(self.bus.adr)
-
-        with m.Switch(self.bus.bte):
-            with m.Case(wishbone.BurstTypeExt.LINEAR):
-                m.d.comb += incr.eq(self.bus.adr + 1)
-            with m.Case(wishbone.BurstTypeExt.WRAP_4):
-                m.d.comb += incr[:2].eq(self.bus.adr[:2] + 1)
-                m.d.comb += incr[2:].eq(self.bus.adr[2:])
-            with m.Case(wishbone.BurstTypeExt.WRAP_8):
-                m.d.comb += incr[:3].eq(self.bus.adr[:3] + 1)
-                m.d.comb += incr[3:].eq(self.bus.adr[3:])
-            with m.Case(wishbone.BurstTypeExt.WRAP_16):
-                m.d.comb += incr[:4].eq(self.bus.adr[:4] + 1)
-                m.d.comb += incr[4:].eq(self.bus.adr[4:])
-
         mem_rp = self._mem.read_port()
         m.d.comb += self.bus.dat_r.eq(mem_rp.data)
 
-        with m.If(self.bus.cyc & self.bus.stb):
+        next_addr = Signal.like(self.bus.adr)
+
+        with m.Switch(self.bus.bte):
+            with m.Case(wishbone.BurstTypeExt.LINEAR):
+                m.d.comb += next_addr.eq(self.bus.adr + 1)
+            with m.Case(wishbone.BurstTypeExt.WRAP_4):
+                m.d.comb += next_addr.eq((self.bus.adr & ~0b11) | ((self.bus.adr + 1) & 0b11))
+            with m.Case(wishbone.BurstTypeExt.WRAP_8):
+                m.d.comb += next_addr.eq((self.bus.adr & ~0b111) | ((self.bus.adr + 1) & 0b111))
+            with m.Case(wishbone.BurstTypeExt.WRAP_16):
+                m.d.comb += next_addr.eq((self.bus.adr & ~0b1111) | ((self.bus.adr + 1) & 0b1111))
+
+        current_addr = Signal.like(self.bus.adr)
+        in_burst = Signal(reset=0)
+
+        with m.If(self.bus.cyc):
+            with m.If(self.bus.stb & self.bus.ack & (self.bus.cti == wishbone.CycleType.END_OF_BURST)):
+                m.d.sync += in_burst.eq(0)
+            with m.Elif(self.bus.stb & ~self.bus.ack & ~in_burst & 
+                      (self.bus.cti != wishbone.CycleType.CLASSIC) & 
+                      (self.bus.cti != wishbone.CycleType.END_OF_BURST)):
+                m.d.sync += [
+                    in_burst.eq(1),
+                    current_addr.eq(self.bus.adr)
+                ]
+            with m.Elif(self.bus.stb & self.bus.ack & in_burst & 
+                       (self.bus.cti != wishbone.CycleType.END_OF_BURST)):
+                m.d.sync += current_addr.eq(next_addr)
+        with m.Else():
+            m.d.sync += in_burst.eq(0)
+
+        with m.If(self.bus.cyc & self.bus.stb & ~self.bus.ack):
             m.d.sync += self.bus.ack.eq(1)
-            with m.If((self.bus.cti == wishbone.CycleType.INCR_BURST) & self.bus.ack):
-                m.d.comb += mem_rp.addr.eq(incr)
-            with m.Else():
-                m.d.comb += mem_rp.addr.eq(self.bus.adr)
+            m.d.comb += mem_rp.addr.eq(self.bus.adr)
+        with m.Elif(self.bus.cyc & self.bus.stb & self.bus.ack & in_burst):
+            m.d.comb += mem_rp.addr.eq(next_addr)
+        with m.Elif(self.bus.cyc & ~self.bus.stb):
+            m.d.sync += self.bus.ack.eq(0)
+        with m.Else():
+            m.d.sync += self.bus.ack.eq(0)
 
         if self.writable:
             mem_wp = self._mem.write_port(granularity=self.granularity)
-            m.d.comb += mem_wp.addr.eq(mem_rp.addr)
+            m.d.comb += mem_wp.addr.eq(self.bus.adr)  # Always use immediate address for writes
             m.d.comb += mem_wp.data.eq(self.bus.dat_w)
-            with m.If(self.bus.cyc & self.bus.stb & self.bus.we):
+            with m.If(self.bus.cyc & self.bus.stb & self.bus.we & in_burst):
                 m.d.comb += mem_wp.en.eq(self.bus.sel)
-
-        # We can handle any transaction request in a single cycle, when our RAM handles
-        # the read or write. Accordingly, we'll ACK the cycle after any request.
-        m.d.sync += self.bus.ack.eq(
-            self.bus.cyc &
-            self.bus.stb &
-            ~self.bus.ack
-        )
 
         return m
