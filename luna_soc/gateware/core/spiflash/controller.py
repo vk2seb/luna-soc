@@ -112,6 +112,10 @@ class SPIController(wiring.Component):
         m.submodules.tx_fifo = tx_fifo = self._tx_fifo
 
         # Chip select generation.
+        cs_wr = Signal()
+        with m.If(self._cs.f.select.w_stb):
+            m.d.sync += cs_wr.eq(self._cs.f.select.w_data)
+
         cs = Signal()
         with m.FSM():
             with m.State("RISE"):
@@ -121,7 +125,7 @@ class SPIController(wiring.Component):
                     m.next = "FALL"
             with m.State("FALL"):
                 # Only disable chip select after the current TX FIFO is emptied.
-                m.d.comb += cs.eq(self._cs.f.select.w_data | tx_fifo.r_rdy)
+                m.d.comb += cs.eq(cs_wr | tx_fifo.r_rdy)
                 with m.If(cs == 0):
                     m.next = "RISE"
 
