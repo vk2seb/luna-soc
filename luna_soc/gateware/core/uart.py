@@ -110,10 +110,10 @@ class Peripheral(wiring.Component):
             rx.divisor.eq(self._divisor.f.div.data),
             fifo.w_data.eq(rx.data),
             fifo.w_en.eq(rx.rdy),
-            rx.ack.eq(fifo.w_ready),
+            rx.ack.eq(fifo.w_rdy),
             self._rx_data.f.data.r_data.eq(fifo.r_data),
             self._rx_avail.f.rxe.r_data.eq(fifo.r_valid),
-            fifo.r_stb.eq(self._rx_data.f.data.r_stb),
+            fifo.r_en.eq(self._rx_data.f.data.r_stb),
         ]
 
         return m
