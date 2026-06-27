@@ -109,7 +109,7 @@ class Peripheral(wiring.Component):
             rx.i.eq(self.pins.rx),
             rx.divisor.eq(self._divisor.f.div.data),
             fifo.w_data.eq(rx.data),
-            fifo.w_valid.eq(rx.rdy),
+            fifo.w_en.eq(rx.rdy),
             rx.ack.eq(fifo.w_ready),
             self._rx_data.f.data.r_data.eq(fifo.r_data),
             self._rx_avail.f.rxe.r_data.eq(fifo.r_valid),
