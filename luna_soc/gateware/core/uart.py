@@ -6,6 +6,7 @@
 
 from amaranth               import *
 from amaranth.lib           import wiring
+from amaranth.lib.fifo      import SyncFIFOBuffered
 from amaranth.lib.wiring    import In, Out, flipped, connect
 
 from amaranth_soc           import csr
@@ -51,7 +52,8 @@ class Peripheral(wiring.Component):
         txe: csr.Field(csr.action.R, unsigned(1))
 
     class RxAvail(csr.Register, access="r"):
-        """is '1' when 1-byte receive buffer is full; reset by a read from rx_data"""
+        """is '1' when the receive FIFO holds at least one byte; a read from
+        rx_data pops the oldest byte"""
         rxe: csr.Field(csr.action.R, unsigned(1))
 
     class BaudRate(csr.Register, access="rw"):
@@ -100,26 +102,18 @@ class Peripheral(wiring.Component):
             tx.divisor.eq(self._divisor.f.div.data)
         ]
 
-        rx_buf = Signal(unsigned(8))
-        rx_avail = Signal()
-
         m.submodules.rx = rx = AsyncSerialRX(divisor=self._init_divisor, divisor_bits=24)
-
-        with m.If(self._rx_data.f.data.r_stb):
-            m.d.sync += rx_avail.eq(0)
-
-        with m.If(rx.rdy):
-            m.d.sync += [
-                rx_buf.eq(rx.data),
-                rx_avail.eq(1)
-            ]
+        m.submodules.rx_fifo = fifo = SyncFIFOBuffered(width=8, depth=16)
 
         m.d.comb += [
             rx.i.eq(self.pins.rx),
-            rx.ack.eq(~rx_avail),
             rx.divisor.eq(self._divisor.f.div.data),
-            self._rx_data.f.data.r_data.eq(rx_buf),
-            self._rx_avail.f.rxe.r_data.eq(rx_avail)
+            fifo.w_data.eq(rx.data),
+            fifo.w_valid.eq(rx.rdy),
+            rx.ack.eq(fifo.w_ready),
+            self._rx_data.f.data.r_data.eq(fifo.r_data),
+            self._rx_avail.f.rxe.r_data.eq(fifo.r_valid),
+            fifo.r_stb.eq(self._rx_data.f.data.r_stb),
         ]
 
         return m
